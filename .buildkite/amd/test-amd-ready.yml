@@ -10,7 +10,7 @@ steps:
     - label: "Simple · Model Executor Test · Shard %N/%t"
       agent_pool: mi300_1
       parallelism: 2
-      depends_on: amd-build
+      depends_on: image-build
       mirror_hardwares: [amdproduction]
       grade: Blocking
       commands:
@@ -21,7 +21,7 @@ steps:
 
     - label: "Simple · Diffusion Test"
       agent_pool: mi300_1
-      depends_on: amd-build
+      depends_on: image-build
       mirror_hardwares: [amdproduction]
       grade: Blocking
       commands:
@@ -32,7 +32,7 @@ steps:
 
     - label: "Simple · Engine&Entrypoints Test"
       agent_pool: mi300_1
-      depends_on: amd-build
+      depends_on: image-build
       mirror_hardwares: [amdproduction]
       grade: Blocking
       commands:
@@ -41,7 +41,7 @@ steps:
 
     - label: "Simple · Other Test"
       agent_pool: mi300_1
-      depends_on: amd-build
+      depends_on: image-build
       mirror_hardwares: [amdproduction]
       grade: Blocking
       commands:
@@ -52,7 +52,7 @@ steps:
 
 - label: "Custom Pipeline Test"
   agent_pool: mi300_1
-  depends_on: amd-build
+  depends_on: image-build
   mirror_hardwares: [amdproduction]
   grade: Blocking
   commands:
@@ -61,7 +61,7 @@ steps:
 
 - label: "Voxtral TTS CUDA Unit Test"
   agent_pool: mi300_1
-  depends_on: amd-build
+  depends_on: image-build
   mirror_hardwares: [amdproduction]
   grade: Blocking
   commands:
@@ -71,7 +71,7 @@ steps:
   steps:
     - label: "Diffusion · Batch Test"
       agent_pool: mi300_1
-      depends_on: amd-build
+      depends_on: image-build
       mirror_hardwares: [amdproduction]
       grade: Blocking
       commands:
@@ -79,7 +79,7 @@ steps:
 
     - label: "Diffusion · Offloader Test"
       agent_pool: mi300_1
-      depends_on: amd-build
+      depends_on: image-build
       mirror_hardwares: [amdproduction]
       grade: Blocking
       commands:
@@ -89,7 +89,7 @@ steps:
 
     - label: "Diffusion · Cache Test"
       agent_pool: mi300_1
-      depends_on: amd-build
+      depends_on: image-build
       mirror_hardwares: [amdproduction]
       grade: Blocking
       commands:
@@ -100,7 +100,7 @@ steps:
 
     - label: "Diffusion Sequence Parallelism Test"
       agent_pool: mi300_2
-      depends_on: amd-build
+      depends_on: image-build
       mirror_hardwares: [amdproduction]
       grade: Blocking
       commands:
@@ -110,7 +110,7 @@ steps:
 
     - label: "Diffusion GPU Worker Test"
       agent_pool: mi300_2
-      depends_on: amd-build
+      depends_on: image-build
       mirror_hardwares: [amdproduction]
       grade: Blocking
       commands:
@@ -118,7 +118,7 @@ steps:
 
     - label: "Diffusion · Model Test"
       agent_pool: mi300_1
-      depends_on: amd-build
+      depends_on: image-build
       mirror_hardwares: [amdproduction]
       grade: Blocking
       commands:
@@ -126,7 +126,7 @@ steps:
 
     - label: "Diffusion · Wan22 Test"
       agent_pool: mi300_1
-      depends_on: amd-build
+      depends_on: image-build
       mirror_hardwares: [amdproduction]
       grade: Blocking
       commands:
@@ -140,7 +140,7 @@ steps:
 ## ISSUE depends on `diffusers` package: https://github.com/huggingface/diffusers/issues/13274
 # - label: "Audio Generation Model Test"
 #   agent_pool: mi300_1
-#   depends_on: amd-build
+#   depends_on: image-build
 #   mirror_hardwares: [amdproduction]
 #   grade: Blocking
 #   commands:
@@ -151,7 +151,7 @@ steps:
 
 - label: "Engine Test"
   agent_pool: mi300_1
-  depends_on: amd-build
+  depends_on: image-build
   mirror_hardwares: [amdproduction]
   grade: Blocking
   commands:
@@ -163,7 +163,7 @@ steps:
 
 # - label: "Omni Model Test Qwen3-Omni"
 #   agent_pool: mi300_2
-#   depends_on: amd-build
+#   depends_on: image-build
 #   mirror_hardwares: [amdproduction]
 #   grade: Blocking
 #   commands:
@@ -176,7 +176,7 @@ steps:
   steps:
     - label: "Qwen3-TTS E2E Test"
       agent_pool: mi300_1
-      depends_on: amd-build
+      depends_on: image-build
       mirror_hardwares: [amdproduction]
       grade: Blocking
       commands:
@@ -187,7 +187,7 @@ steps:
 
     - label: "CosyVoice3-TTS E2E Test"
       agent_pool: mi300_1
-      depends_on: amd-build
+      depends_on: image-build
       mirror_hardwares: [amdproduction]
       grade: Blocking
       commands:
@@ -197,7 +197,7 @@ steps:
 # Need to debug before reneable numerical changes across large PRs
 # - label: "Bagel Text2Img Model Test"
 #   agent_pool: mi300_1
-#   depends_on: amd-build
+#   depends_on: image-build
 #   mirror_hardwares: [amdproduction]
 #   grade: Blocking
 #   commands:
@@ -209,7 +209,7 @@ steps:
 
 # - label: "Bagel Img2Img Model Test"
 #   agent_pool: mi300_1
-#   depends_on: amd-build
+#   depends_on: image-build
 #   mirror_hardwares: [amdproduction]
 #   grade: Blocking
 #   commands:
@@ -221,7 +221,7 @@ steps:
 
 # - label: "Bagel Online Serving Test"
 #   agent_pool: mi300_1
-#   depends_on: amd-build
+#   depends_on: image-build
 #   mirror_hardwares: [amdproduction]
 #   grade: Blocking
 #   commands:
