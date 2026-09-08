@@ -187,6 +187,8 @@ AMD has an experimental, non-blocking L4 vertical slice in
 It runs ROCm Qwen3-Omni expansion, accuracy, documentation-example, and
 AITER-on smoke coverage on the native MI300 pool. PRs select it with
 `nightly-test`; scheduled `main` builds select it with `NIGHTLY=1`.
+Ready/PR CI separately runs one bounded two-GPU text smoke with collection
+validation and uploads model, cache, ROCm, collection, and pytest diagnostics.
 
 How count-form `mirror_hardwares` and `MIRROR_HW` pick a SKU: [CI Settings](./ci_settings.md).
 

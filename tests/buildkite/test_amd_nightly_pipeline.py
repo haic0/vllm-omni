@@ -45,8 +45,11 @@ def test_nightly_inventory_is_explicit_and_non_blocking() -> None:
 def test_nightly_commands_select_rocm_full_model_cases() -> None:
     for step in _leaf_steps():
         command = "\n".join(step["commands"])
-        assert f'-m "{ROCM_SELECTION}"' in command
-        assert '--run-level "full_model"' in command
+        assert "run-qwen3-omni-ci-test.sh" in command
+        assert 'QWEN3_TEST_TARGET="' in command
+        assert 'QWEN3_TEST_MARKER="' in command
+        assert f'QWEN3_TEST_MARKER="{ROCM_SELECTION}"' in command
+        assert 'QWEN3_RUN_LEVEL="full_model"' in command
 
     aiter = next(
         step for step in _leaf_steps() if step["label"] == "Qwen3-Omni AITER-on Smoke"
@@ -60,4 +63,9 @@ def test_accuracy_results_are_published_as_artifacts() -> None:
     )
     assert accuracy["artifact_paths"] == [
         "tests/e2e/accuracy/qwen3_omni/results/qwen_omni_acc/*.json",
+        "qwen3-omni-ci/*.log",
     ]
+
+
+def test_nightly_steps_publish_runtime_diagnostics() -> None:
+    assert all("qwen3-omni-ci/*.log" in step["artifact_paths"] for step in _leaf_steps())

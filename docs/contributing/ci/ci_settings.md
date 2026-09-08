@@ -166,7 +166,7 @@ Canonical layout (prefer these paths for new changes):
 
     **Bootstrap:** [`amd/pipeline.yml`](https://github.com/vllm-project/vllm-omni/blob/main/.buildkite/amd/pipeline.yml) invokes the AMD-specific uploader. It reuses only `skip_ci.py` for diff decisions, injects AMD bootstrap conditions, builds the image once, selects suites, renders Jinja, and uploads the native MI300 child jobs.
 
-    **Test YAML (data):** `amd/test-amd-ready.yml` (L2 / `ready`), `test-amd-merge.yml` (L3 / `merge-test` and ordinary `main`), and experimental `test-amd-nightly.yml` (L4 / `nightly-test` or `main` with `NIGHTLY=1`). Multiple selected suites share one image build; nightly leaves are non-blocking during burn-in.
+    **Test YAML (data):** `amd/test-amd-ready.yml` (L2 / `ready`) includes one bounded Qwen3-Omni ROCm smoke with fail-closed collection and diagnostic artifacts. `test-amd-merge.yml` (L3 / `merge-test` and ordinary `main`) retains the full online/offline/colocate matrix. Experimental `test-amd-nightly.yml` (L4 / `nightly-test` or `main` with `NIGHTLY=1`) carries the broader Qwen3 suite separately; nightly leaves are non-blocking during burn-in.
 
     **Rendering:** [`test-template-amd-omni.j2`](https://github.com/vllm-project/vllm-omni/blob/main/.buildkite/amd/test-template-amd-omni.j2) maps data steps to `amd_<agent_pool>` queues. Image construction is owned by the checked-in bootstrap, while test leaves retain native MI300 Kubernetes execution. Do **not** hand-edit generated `pipeline.yaml`.
 

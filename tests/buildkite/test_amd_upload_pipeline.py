@@ -56,3 +56,11 @@ def test_amd_filter_preserves_native_hardware_and_filters_sources() -> None:
 def test_docs_only_amd_bootstrap_is_schedule_only() -> None:
     decision = SimpleNamespace(skip_all=True, skip_l2_l3=False)
     assert UPLOADER._amd_upload_if(decision) == UPLOADER.NIGHTLY_MAIN_IF
+
+
+def test_qwen3_runner_fails_closed_on_empty_collection() -> None:
+    runner = Path(".buildkite/amd/scripts/run-qwen3-omni-ci-test.sh").read_text()
+    assert "pytest --collect-only" in runner
+    assert "collection_count" in runner
+    assert "Qwen3 selector collected no tests" in runner
+    assert "exit 5" in runner
