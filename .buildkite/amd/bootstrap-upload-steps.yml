@@ -16,6 +16,6 @@ steps:
   - label: "Upload AMD Test Pipeline"
     depends_on: image-build
     key: upload-amd-pipeline
-    command: python3 .buildkite/amd/scripts/upload_pipeline.py --upload
+    command: python3 .buildkite/common/scripts/upload_pipeline.py --amd --upload
     agents:
       queue: "cpu_queue_premerge"

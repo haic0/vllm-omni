@@ -4,6 +4,6 @@ steps:
   - label: ":github: Resolve skip-ci & upload AMD pipeline"
     key: upload-ci-pipeline
     commands:
-      - "python3 .buildkite/amd/scripts/upload_pipeline.py --bootstrap --upload .buildkite/amd/bootstrap-upload-steps.yml"
+      - "python3 .buildkite/common/scripts/upload_pipeline.py --upload .buildkite/amd/bootstrap-upload-steps.yml"
     agents:
       queue: "cpu_queue_premerge"
