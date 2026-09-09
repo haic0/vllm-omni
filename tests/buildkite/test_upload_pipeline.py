@@ -129,7 +129,7 @@ def test_amd_bootstrap_conditions_and_command_use_shared_uploader() -> None:
     doc = yaml.safe_load(rendered)
     by_key = {step["key"]: step for step in doc["steps"]}
     assert "upload-amd-pipeline" in by_key
-    assert "build.branch == \"main\"" in by_key["upload-amd-pipeline"]["if"]
+    assert 'build.branch == "main"' in by_key["upload-amd-pipeline"]["if"]
     assert "common/scripts/upload_pipeline.py" in by_key["upload-amd-pipeline"]["command"]
     assert "--amd" in by_key["upload-amd-pipeline"]["command"]
     assert "if: false" not in rendered
@@ -187,9 +187,7 @@ def _amd_leaf_steps(path: Path) -> list[dict]:
 def test_amd_qwen3_jobs_use_guarded_runner_and_diagnostics() -> None:
     for path in (AMD_READY_STEPS, AMD_NIGHTLY_STEPS):
         qwen_steps = [
-            step
-            for step in _amd_leaf_steps(path)
-            if "QWEN3_TEST_TARGET" in "\n".join(step.get("commands", []))
+            step for step in _amd_leaf_steps(path) if "QWEN3_TEST_TARGET" in "\n".join(step.get("commands", []))
         ]
         assert qwen_steps
         for step in qwen_steps:
@@ -204,6 +202,8 @@ def test_amd_qwen3_jobs_use_guarded_runner_and_diagnostics() -> None:
     nightly = "\n".join(_amd_leaf_commands(AMD_NIGHTLY_STEPS))
     assert "VLLM_ROCM_USE_AITER=1" in ready
     assert "VLLM_ROCM_USE_AITER=1" not in nightly
+
+
 def test_mirror_hardwares_l4_1_expands_to_agents_and_plugins(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr("upload_pipeline._get_mirror_hw_selector", lambda: "")
     doc = {

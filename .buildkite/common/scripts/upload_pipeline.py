@@ -165,31 +165,15 @@ def _compute_bootstrap_if_exprs(*, decision, platform: str) -> dict[str, str]:
         # Docs / skip-mark only: no PR-label escape hatch. Main scheduled
         # NIGHTLY=1 still runs L4; WEEKLY=1 / NON_CRITICAL=1 still run L5.
         # main+WEEKLY=1 also uploads L2/L3 (those steps then pass --e2e).
-        image_expr = (
-            f"({NIGHTLY_MAIN_IF}) || ({WEEKLY_MAIN_IF})"
-            if platform == "cuda"
-            else NIGHTLY_MAIN_IF
-        )
+        image_expr = f"({NIGHTLY_MAIN_IF}) || ({WEEKLY_MAIN_IF})" if platform == "cuda" else NIGHTLY_MAIN_IF
         ready_expr = (
-            WEEKLY_E2E_IF
-            if platform == "cuda"
-            else READY_LABEL_IF
-            if platform == "amd"
-            else BOOTSTRAP_DISABLED_IF
+            WEEKLY_E2E_IF if platform == "cuda" else READY_LABEL_IF if platform == "amd" else BOOTSTRAP_DISABLED_IF
         )
         merge_expr = (
-            WEEKLY_E2E_IF
-            if platform == "cuda"
-            else MERGE_UPLOAD_IF
-            if platform == "amd"
-            else BOOTSTRAP_DISABLED_IF
+            WEEKLY_E2E_IF if platform == "cuda" else MERGE_UPLOAD_IF if platform == "amd" else BOOTSTRAP_DISABLED_IF
         )
         nightly_expr = NIGHTLY_MAIN_IF
-        weekly_expr = (
-            WEEKLY_MAIN_IF
-            if platform == "cuda"
-            else BOOTSTRAP_DISABLED_IF
-        )
+        weekly_expr = WEEKLY_MAIN_IF if platform == "cuda" else BOOTSTRAP_DISABLED_IF
     elif decision.skip_l2_l3:
         l2_enabled = (
             decision.is_run(platform, "l2")
@@ -199,9 +183,7 @@ def _compute_bootstrap_if_exprs(*, decision, platform: str) -> dict[str, str]:
             else decision.is_run("cuda", "l2")
         )
         l3_enabled = (
-            decision.is_run("amd", "l3")
-            if platform == "amd"
-            else platform == "cuda" and decision.is_run("cuda", "l3")
+            decision.is_run("amd", "l3") if platform == "amd" else platform == "cuda" and decision.is_run("cuda", "l3")
         )
 
         ready_expr = ready_upload if l2_enabled else BOOTSTRAP_DISABLED_IF
@@ -234,9 +216,7 @@ def _compute_bootstrap_if_exprs(*, decision, platform: str) -> dict[str, str]:
     if platform == "amd":
         if decision.skip_all:
             amd_expr = NIGHTLY_MAIN_IF
-        elif decision.skip_l2_l3 and not (
-            decision.is_run("amd", "l2") or decision.is_run("amd", "l3")
-        ):
+        elif decision.skip_l2_l3 and not (decision.is_run("amd", "l2") or decision.is_run("amd", "l3")):
             amd_expr = NIGHTLY_LABEL_IF
         else:
             amd_expr = BOOTSTRAP_ENABLED_IF
@@ -722,9 +702,7 @@ def _ensure_minijinja() -> str:
             "-o",
             "pipefail",
             "-c",
-            "curl -sSfL "
-            "https://github.com/mitsuhiko/minijinja/releases/download/2.3.1/"
-            "minijinja-cli-installer.sh | sh",
+            "curl -sSfL https://github.com/mitsuhiko/minijinja/releases/download/2.3.1/minijinja-cli-installer.sh | sh",
         ],
         check=True,
     )

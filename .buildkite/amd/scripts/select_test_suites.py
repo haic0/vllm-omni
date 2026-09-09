@@ -6,7 +6,6 @@
 from __future__ import annotations
 
 import argparse
-import sys
 from collections.abc import Iterable
 
 SUITE_SPECS = {
