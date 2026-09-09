@@ -31,11 +31,14 @@ SPEC.loader.exec_module(SELECTOR)
     ],
 )
 def test_label_suite_selection(branch, labels, nightly, expected):
-    assert SELECTOR.select_amd_test_suites(
-        branch=branch,
-        labels=labels,
-        nightly=nightly,
-    ) == expected
+    assert (
+        SELECTOR.select_amd_test_suites(
+            branch=branch,
+            labels=labels,
+            nightly=nightly,
+        )
+        == expected
+    )
 
 
 def test_debug_override_takes_precedence() -> None:
