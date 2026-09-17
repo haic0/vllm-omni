@@ -12,6 +12,7 @@ steps:
       parallelism: 2
       depends_on: amd-build
       mirror_hardwares: [amdproduction]
+      timeout_in_minutes: 240
       grade: Blocking
       commands:
         - export VLLM_ROCM_USE_AITER=0
