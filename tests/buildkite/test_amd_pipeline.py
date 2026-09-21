@@ -13,6 +13,7 @@ AMD_MERGE_PIPELINE = Path(".buildkite/amd/test-amd-merge.yml")
 AMD_NIGHTLY_PIPELINE = Path(".buildkite/amd/test-amd-nightly.yml")
 AMD_READY_PIPELINE = Path(".buildkite/amd/test-amd-ready.yml")
 AMD_TEMPLATE = Path(".buildkite/amd/test-template-amd-omni.j2")
+LINGBOT_VIDEO_EXPANSION_TEST = Path("tests/e2e/online_serving/test_lingbot_video_expansion.py")
 
 
 def _find_step(label: str, pipeline_path: Path = AMD_MERGE_PIPELINE) -> dict:
@@ -55,6 +56,30 @@ def test_qwen3_accuracy_defers_artifact_path_expansion() -> None:
     assert '"$${BUILDKITE_BUILD_CHECKOUT_PATH:?}"' in staging_command
     assert '"$$artifact_dir"' in staging_command
     assert step["artifact_paths"] == ["tests/e2e/accuracy/qwen3_omni/results/qwen_omni_acc/*.json"]
+
+
+def test_lingbot_video_nightly_is_single_mi300_nonblocking_smoke() -> None:
+    step = _find_step("LingBot-Video Dense CFG-off Smoke", AMD_NIGHTLY_PIPELINE)
+    commands = "\n".join(step["commands"])
+    pytest_command = next(command for command in step["commands"] if "pytest -s" in command)
+    argv = split(pytest_command)
+    test_node = "tests/e2e/online_serving/test_lingbot_video_expansion.py::test_cfg_off"
+
+    assert step["agent_pool"] == "mi300_1"
+    assert step["grade"] == "NonBlocking"
+    assert step["timeout_in_minutes"] == 90
+    assert step["artifact_paths"] == ["artifacts/rocm-lingbot-nightly/**/*"]
+    assert commands.count(test_node) == 2
+    assert "--collect-only" in commands
+    assert "rocm-smi" in commands
+    assert test_node in argv
+    assert argv[argv.index("-m") + 1] == "full_model and diffusion and rocm and MI325 and cards_1"
+    assert argv[argv.index("--run-level") + 1] == "full_model"
+    assert "--junitxml=$$LINGBOT_ARTIFACT_DIR/pytest.xml" in argv
+    assert "VLLM_CI_ALLOW_NO_TESTS" not in commands
+
+    test_source = LINGBOT_VIDEO_EXPANSION_TEST.read_text(encoding="utf-8")
+    assert '@hardware_test(res={"rocm": "MI325"}, num_cards=1)' in test_source
 
 
 def test_ready_diffusion_cpu_suite_is_sharded() -> None:
