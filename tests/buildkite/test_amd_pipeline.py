@@ -1,11 +1,14 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM-Omni project
 
+import subprocess
+import sys
 from pathlib import Path
 from shlex import split
 
 import pytest
 import yaml
+from jinja2 import Environment
 
 pytestmark = [pytest.mark.core_model, pytest.mark.cpu]
 
@@ -13,11 +16,18 @@ AMD_MERGE_PIPELINE = Path(".buildkite/amd/test-amd-merge.yml")
 AMD_NIGHTLY_PIPELINE = Path(".buildkite/amd/test-amd-nightly.yml")
 AMD_READY_PIPELINE = Path(".buildkite/amd/test-amd-ready.yml")
 AMD_TEMPLATE = Path(".buildkite/amd/test-template-amd-omni.j2")
-LINGBOT_VIDEO_EXPANSION_TEST = Path("tests/e2e/online_serving/test_lingbot_video_expansion.py")
 
 
-def _find_step(label: str, pipeline_path: Path = AMD_MERGE_PIPELINE) -> dict:
+def _find_step(
+    label: str,
+    pipeline_path: Path = AMD_MERGE_PIPELINE,
+    *,
+    rendered: bool = False,
+) -> dict:
     pipeline = yaml.safe_load(pipeline_path.read_text(encoding="utf-8"))
+    if rendered:
+        template = Environment(autoescape=False).from_string(AMD_TEMPLATE.read_text(encoding="utf-8"))
+        pipeline = yaml.safe_load(template.render(**pipeline, mirror_hw="amdproduction"))
 
     def walk(steps: list[dict]) -> dict | None:
         for step in steps:
@@ -59,27 +69,68 @@ def test_qwen3_accuracy_defers_artifact_path_expansion() -> None:
 
 
 def test_lingbot_video_nightly_is_single_mi300_nonblocking_smoke() -> None:
-    step = _find_step("LingBot-Video Dense CFG-off Smoke", AMD_NIGHTLY_PIPELINE)
-    commands = "\n".join(step["commands"])
-    pytest_command = next(command for command in step["commands"] if "pytest -s" in command)
-    argv = split(pytest_command)
+    step = _find_step(
+        "mi300_1: LingBot-Video Dense CFG-off Smoke",
+        AMD_NIGHTLY_PIPELINE,
+        rendered=True,
+    )
+    commands = step["env"]["TEST_COMMANDS"]
+    command_lines = [line.strip() for line in commands.splitlines() if line.strip()]
+    collect_command = next(line for line in command_lines if line.startswith("pytest --collect-only"))
+    pytest_command = next(line for line in command_lines if line.startswith("pytest -s"))
+    collect_argv = split(collect_command)
+    pytest_argv = split(pytest_command)
     test_node = "tests/e2e/online_serving/test_lingbot_video_expansion.py::test_cfg_off"
+    marker = "full_model and diffusion and rocm and MI325 and cards_1"
+    artifact_dir = "$$BUILDKITE_BUILD_CHECKOUT_PATH/artifacts/rocm-lingbot-nightly"
 
-    assert step["agent_pool"] == "mi300_1"
-    assert step["grade"] == "NonBlocking"
+    assert step["depends_on"] == "amd-build"
+    assert step["agents"] == {"queue": "amd_mi300_1"}
+    assert step["command"] == "bash .buildkite/amd/scripts/run-amd-test.sh"
+    assert step["soft_fail"] is True
     assert step["timeout_in_minutes"] == 90
     assert step["artifact_paths"] == ["artifacts/rocm-lingbot-nightly/**/*"]
+    container = step["plugins"][0]["kubernetes"]["podSpecPatch"]["containers"][0]
+    assert container["image"] == "rocm/vllm-omni:$BUILDKITE_COMMIT"
+    assert container["resources"] == {
+        "limits": {"amd.com/gpu": "1"},
+        "requests": {"amd.com/gpu": "1"},
+    }
     assert commands.count(test_node) == 2
-    assert "--collect-only" in commands
-    assert "rocm-smi" in commands
-    assert test_node in argv
-    assert argv[argv.index("-m") + 1] == "full_model and diffusion and rocm and MI325 and cards_1"
-    assert argv[argv.index("--run-level") + 1] == "full_model"
-    assert "--junitxml=$$LINGBOT_ARTIFACT_DIR/pytest.xml" in argv
+    assert test_node in collect_argv
+    assert collect_argv[collect_argv.index("-m") + 1] == marker
+    assert collect_argv[collect_argv.index("--run-level") + 1] == "full_model"
+    assert test_node in pytest_argv
+    assert pytest_argv[pytest_argv.index("-m") + 1] == marker
+    assert pytest_argv[pytest_argv.index("--run-level") + 1] == "full_model"
+    assert "--junitxml=$$LINGBOT_ARTIFACT_DIR/pytest.xml" in pytest_argv
+    assert f'export LINGBOT_ARTIFACT_DIR="{artifact_dir}"' in command_lines
+    assert 'rocm-smi 2>&1 | tee "$$LINGBOT_ARTIFACT_DIR/rocm-smi.txt"' in command_lines
+    assert '2>&1 | tee "$$LINGBOT_ARTIFACT_DIR/pytest.log"' in pytest_command
+    assert (
+        'tail -n 100 "$$LINGBOT_ARTIFACT_DIR/pytest.log" > "$$LINGBOT_ARTIFACT_DIR/pytest-summary.txt"'
+    ) in command_lines
     assert "VLLM_CI_ALLOW_NO_TESTS" not in commands
 
-    test_source = LINGBOT_VIDEO_EXPANSION_TEST.read_text(encoding="utf-8")
-    assert '@hardware_test(res={"rocm": "MI325"}, num_cards=1)' in test_source
+    collected = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "pytest",
+            "--collect-only",
+            "-q",
+            test_node,
+            "-m",
+            marker,
+            "--run-level",
+            "full_model",
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert collected.returncode == 0, collected.stdout + collected.stderr
+    assert f"{test_node}[default]" in collected.stdout
 
 
 def test_ready_diffusion_cpu_suite_is_sharded() -> None:
