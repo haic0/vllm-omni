@@ -57,6 +57,32 @@ def test_qwen3_accuracy_defers_artifact_path_expansion() -> None:
     assert step["artifact_paths"] == ["tests/e2e/accuracy/qwen3_omni/results/qwen_omni_acc/*.json"]
 
 
+def test_hunyuanimage3_nightly_selects_one_offline_accuracy_case() -> None:
+    step = _find_step("HunyuanImage3 Offline Pixel Accuracy", AMD_NIGHTLY_PIPELINE)
+    commands = "\n".join(step["commands"])
+    staging_command = next(command for command in step["commands"] if "artifact_dir=" in command)
+    test_node = "tests/e2e/accuracy/test_hunyuan_image3_pixel_accuracy.py::test_hunyuan_image3_pixel_accuracy_offline"
+
+    assert step["agent_pool"] == "mi300_4"
+    assert step["depends_on"] == "amd-build"
+    assert step["mirror_hardwares"] == ["amdproduction"]
+    assert step["grade"] == "NonBlocking"
+    assert step["timeout_in_minutes"] == 180
+    assert step["env"] == {
+        "HUNYUAN_IMAGE3_MODEL": "tencent/HunyuanImage-3.0-Instruct",
+        "HUNYUAN_IMAGE3_DEVICES": "0,1,2,3",
+        "DIFFUSION_ATTENTION_BACKEND": "TORCH_SDPA",
+    }
+    assert step["artifact_paths"] == ["artifacts/rocm-hunyuanimage3/**/*"]
+    assert commands.count(test_node) == 2
+    assert "--collect-only" in commands
+    assert "full_model and rocm and MI325 and cards_4" in commands
+    assert "VLLM_CI_ALLOW_NO_TESTS" not in commands
+    assert "test_hunyuan_image3_pixel_accuracy_online" not in commands
+    assert '"$${BUILDKITE_BUILD_CHECKOUT_PATH:?}' in staging_command
+    assert '"$$artifact_dir"' in staging_command
+
+
 def test_ready_diffusion_cpu_suite_is_sharded() -> None:
     step = _find_step("Simple · Diffusion Test · Shard %N/%t", AMD_READY_PIPELINE)
     pytest_command = next(command for command in step["commands"] if "pytest" in command)
