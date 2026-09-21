@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
+from typing import Any
 
 import pytest
 import yaml
@@ -14,7 +15,9 @@ from skip_ci import resolve_ci_decision  # noqa: E402
 from upload_pipeline import (  # noqa: E402
     CUDA_HF_TOKEN_EXPORT,
     NIGHTLY_LABEL_IF,
+    _changed_files_for_amd_source_filter,
     _changed_files_for_source_filter,
+    _combine_amd_suites,
     _expand_mirror_hardwares,
     _get_mirror_hw_selector,
     _load_bootstrap_steps,
@@ -32,6 +35,9 @@ NIGHTLY_YAML = Path(".buildkite/cuda/test-nightly.yml")
 AMD_BOOTSTRAP_STEPS = Path(".buildkite/amd/bootstrap-upload-steps.yml")
 AMD_BOOTSTRAP_SCRIPT = Path(".buildkite/amd/scripts/bootstrap-amd-omni.sh")
 AMD_TEMPLATE = Path(".buildkite/amd/test-template-amd-omni.j2")
+AMD_READY_YAML = Path(".buildkite/amd/test-amd-ready.yml")
+AMD_MERGE_YAML = Path(".buildkite/amd/test-amd-merge.yml")
+AMD_NIGHTLY_YAML = Path(".buildkite/amd/test-amd-nightly.yml")
 BOOTSTRAP_STEPS_TEMPLATE = """steps:
   - key: image-build
   - key: upload-ready-pipeline
@@ -536,11 +542,13 @@ def _surviving_labels(
     changed_files: list[str],
     *,
     pipeline_path: Path | None = None,
+    platform: str = "cuda",
 ) -> set[str]:
     rendered = _render_test_pipeline(
         doc,
         changed_files=changed_files,
         pipeline_path=pipeline_path,
+        platform=platform,
     )
     labels: set[str] = set()
 
@@ -641,9 +649,121 @@ def test_pipeline_source_file_dependency_keys_are_registered() -> None:
         | _pipeline_dep_keys(Path(".buildkite/cuda/test-nightly.yml"))
         | _pipeline_dep_keys(Path(".buildkite/cuda/test-weekly.yml"))
         | _pipeline_dep_keys(Path(".buildkite/npu/test-npu-nightly.yml"))
+        | _pipeline_dep_keys(AMD_READY_YAML)
+        | _pipeline_dep_keys(AMD_MERGE_YAML)
+        | _pipeline_dep_keys(AMD_NIGHTLY_YAML)
     )
     missing = used - set(registry)
     assert not missing, f"unregistered source_file_dependencies keys: {sorted(missing)}"
+
+
+def _pipeline_labels(path: Path) -> set[str]:
+    doc = yaml.safe_load(path.read_text(encoding="utf-8"))
+    return {step["label"] for step in _iter_steps(doc) if isinstance(step.get("label"), str)}
+
+
+def _amd_labels_for_change(path: Path, changed_file: str) -> set[str]:
+    doc = yaml.safe_load(path.read_text(encoding="utf-8"))
+    return _surviving_labels(
+        doc,
+        [changed_file],
+        pipeline_path=path,
+        platform="amd",
+    )
+
+
+def test_all_amd_jobs_compose_shared_and_job_dependencies() -> None:
+    for path in (AMD_READY_YAML, AMD_MERGE_YAML, AMD_NIGHTLY_YAML):
+        doc = yaml.safe_load(path.read_text(encoding="utf-8"))
+        for step in _iter_steps(doc):
+            if "label" not in step:
+                continue
+            deps = step.get("source_file_dependencies")
+            assert isinstance(deps, list), f"{path}: {step['label']}"
+            assert "amd_ci_shared" in deps, f"{path}: {step['label']}"
+            assert len(deps) >= 2, f"{path}: {step['label']}"
+
+
+def test_amd_unrelated_changes_skip_expensive_jobs() -> None:
+    assert not _amd_labels_for_change(
+        AMD_READY_YAML,
+        "docs/usage/rocm.md",
+    )
+    assert not _amd_labels_for_change(
+        AMD_NIGHTLY_YAML,
+        "vllm_omni/model_executor/models/unrelated/model.py",
+    )
+
+
+def test_amd_relevant_model_change_keeps_mapped_jobs() -> None:
+    labels = _amd_labels_for_change(
+        AMD_MERGE_YAML,
+        "vllm_omni/model_executor/models/qwen3_tts/qwen3_tts_talker.py",
+    )
+    assert {
+        "Qwen3-TTS CustomVoice E2E Test · Shard %N/%t",
+        "Qwen3-TTS CustomVoice async_chunk Test (quarantined)",
+        "Qwen3-TTS Base E2E Test",
+    } <= labels
+    assert "Diffusion · Wan22 Test" not in labels
+
+
+@pytest.mark.parametrize(
+    "changed_file",
+    [
+        ".buildkite/amd/test-template-amd-omni.j2",
+        ".buildkite/common/scripts/upload_pipeline.py",
+        "docker/Dockerfile.rocm",
+        "requirements/rocm.txt",
+    ],
+)
+def test_amd_ci_and_dependency_changes_keep_full_suite(
+    changed_file: str,
+) -> None:
+    assert _amd_labels_for_change(
+        AMD_NIGHTLY_YAML,
+        changed_file,
+    ) == _pipeline_labels(AMD_NIGHTLY_YAML)
+
+
+@pytest.mark.parametrize(
+    "deps",
+    [
+        None,
+        [],
+        {},
+        "missing_amd_dependency_key",
+    ],
+)
+def test_amd_missing_or_malformed_dependencies_fail_open(deps: object) -> None:
+    step: dict[str, Any] = {
+        "label": "AMD guarded job",
+        "mirror_hardwares": ["amdproduction"],
+    }
+    if deps is not None:
+        step["source_file_dependencies"] = deps
+    rendered = _render_test_pipeline(
+        {"steps": [step]},
+        changed_files=["vllm_omni/unrelated.py"],
+        platform="amd",
+    )
+    assert [item["label"] for item in rendered["steps"]] == [
+        "AMD guarded job",
+    ]
+
+
+def test_filtered_amd_suite_yaml_is_valid_and_strips_dependencies() -> None:
+    selected = _combine_amd_suites(
+        ("nightly",),
+        ["tests/e2e/accuracy/qwen3_omni/test_qwen3_omni.py"],
+    )
+    try:
+        doc = yaml.safe_load(selected.read_text(encoding="utf-8"))
+    finally:
+        selected.unlink(missing_ok=True)
+
+    assert {step["label"] for step in _iter_steps(doc) if isinstance(step.get("label"), str)} == {"Qwen3-Omni Accuracy"}
+    assert "source_file_dependencies" not in yaml.safe_dump(doc)
 
 
 def test_source_file_dependencies_key_expands_from_registry() -> None:
@@ -851,6 +971,22 @@ def test_source_filter_respects_force_all_and_uses_diff_on_main(
     ]
     assert _changed_files_for_source_filter(_Ctx(), force_all=True, e2e_only=False) is None
     assert _changed_files_for_source_filter(_Ctx(), force_all=False, e2e_only=True) is None
+
+
+def test_amd_scheduled_nightly_disables_source_filter(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class _Ctx:
+        changed_files = ["vllm_omni/unrelated.py"]
+
+    monkeypatch.setenv("BUILDKITE_BRANCH", "main")
+    monkeypatch.setenv("NIGHTLY", "1")
+    assert _changed_files_for_amd_source_filter(_Ctx()) is None
+
+    monkeypatch.setenv("NIGHTLY", "0")
+    assert _changed_files_for_amd_source_filter(_Ctx()) == [
+        "vllm_omni/unrelated.py",
+    ]
 
 
 def test_source_filter_fallback_is_fallback_when_no_job_key_matches(
