@@ -185,6 +185,21 @@ def test_amd_ready_yaml_gate_includes_unlabeled_pr_fallback() -> None:
     assert 'labels includes "nightly-test"' in condition
 
 
+def test_amd_docs_only_keeps_scheduled_nightly_image_build() -> None:
+    rendered = _render_bootstrap_pipeline(
+        AMD_BOOTSTRAP_STEPS.read_text(encoding="utf-8"),
+        decision=resolve_ci_decision(["docs/foo.md"]),
+        path=AMD_BOOTSTRAP_STEPS,
+    )
+    doc = yaml.safe_load(rendered)
+    by_key = {step["key"]: step for step in doc["steps"]}
+    condition = by_key["image-build"]["if"]
+
+    assert condition == by_key["upload-amd-pipeline"]["if"]
+    assert 'build.branch == "main"' in condition
+    assert 'build.env("NIGHTLY") == "1"' in condition
+
+
 def test_amd_debug_override_skips_pr_label_request(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("BUILDKITE_BRANCH", "feature")
     monkeypatch.setenv("DEBUG_TEST_YAML", "nightly")
