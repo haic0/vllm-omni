@@ -13,6 +13,7 @@ AMD_MERGE_PIPELINE = Path(".buildkite/amd/test-amd-merge.yml")
 AMD_NIGHTLY_PIPELINE = Path(".buildkite/amd/test-amd-nightly.yml")
 AMD_READY_PIPELINE = Path(".buildkite/amd/test-amd-ready.yml")
 AMD_TEMPLATE = Path(".buildkite/amd/test-template-amd-omni.j2")
+COSMOS3_TEST = Path("tests/e2e/online_serving/test_cosmos3.py")
 
 
 def _find_step(label: str, pipeline_path: Path = AMD_MERGE_PIPELINE) -> dict:
@@ -55,6 +56,24 @@ def test_qwen3_accuracy_defers_artifact_path_expansion() -> None:
     assert '"$${BUILDKITE_BUILD_CHECKOUT_PATH:?}"' in staging_command
     assert '"$$artifact_dir"' in staging_command
     assert step["artifact_paths"] == ["tests/e2e/accuracy/qwen3_omni/results/qwen_omni_acc/*.json"]
+
+
+def test_cosmos3_nightly_selects_one_mi300_t2i_item() -> None:
+    step = _find_step("Cosmos3 T2I Function", AMD_NIGHTLY_PIPELINE)
+    pytest_command = next(command for command in step["commands"] if "pytest" in command)
+    argv = split(pytest_command)
+
+    assert step["agent_pool"] == "mi300_1"
+    assert step["grade"] == "NonBlocking"
+    assert step["timeout_in_minutes"] == 60
+    assert step["artifact_paths"] == ["artifacts/rocm-cosmos3-nightly/**/*"]
+    assert "tests/e2e/online_serving/test_cosmos3.py::test_text_to_image_001" in argv
+    assert argv[argv.index("-m") + 1] == "core_model and rocm and MI325 and cards_1"
+    assert "--junitxml=$$COSMOS3_ARTIFACT_DIR/pytest.xml" in argv
+    assert "VLLM_CI_ALLOW_NO_TESTS" not in "\n".join(step["commands"])
+
+    cosmos3_source = COSMOS3_TEST.read_text(encoding="utf-8")
+    assert 'res={"cuda": "H100", "rocm": "MI325"}' in cosmos3_source
 
 
 def test_ready_diffusion_cpu_suite_is_sharded() -> None:
