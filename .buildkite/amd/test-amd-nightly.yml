@@ -14,6 +14,7 @@ steps:
   - group: ":full_moon: Qwen3-Omni MI300 Nightly"
     steps:
       - label: "Qwen3-Omni Function Expansion"
+        source_file_dependencies: [amd_ci_shared, omni_qwen3_omni_function]
         agent_pool: mi300_2
         depends_on: amd-build
         mirror_hardwares: [amdproduction]
@@ -31,6 +32,7 @@ steps:
           - bash .buildkite/amd/scripts/run-amd-test-with-diagnostics.sh
 
       - label: "Qwen3-Omni Accuracy"
+        source_file_dependencies: [amd_ci_shared, omni_qwen3_omni_accuracy]
         agent_pool: mi300_2
         depends_on: amd-build
         mirror_hardwares: [amdproduction]
@@ -67,6 +69,7 @@ steps:
             fi
 
       - label: "Qwen3-Omni Documentation Examples"
+        source_file_dependencies: [amd_ci_shared, omni_qwen3_omni_doc]
         agent_pool: mi300_2
         depends_on: amd-build
         mirror_hardwares: [amdproduction]
@@ -84,6 +87,7 @@ steps:
           - bash .buildkite/amd/scripts/run-amd-test-with-diagnostics.sh
 
       - label: "Qwen3-Omni AITER-on Smoke"
+        source_file_dependencies: [amd_ci_shared, omni_qwen3_omni_function]
         agent_pool: mi300_2
         depends_on: amd-build
         mirror_hardwares: [amdproduction]

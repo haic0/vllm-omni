@@ -145,6 +145,140 @@ source_file_dependencies:
     - .buildkite/common/ci_mirror_hardwares.yml
     - tests/helpers/
 
+  # ROCm image, dependency, CI, and shared runtime inputs. Every AMD job
+  # composes this key with its job-specific dependency key.
+  amd_ci_shared:
+    - .buildkite/
+    - docker/Dockerfile.rocm
+    - docker/Dockerfile.rocm.dockerignore
+    - requirements/
+    - pyproject.toml
+    - setup.py
+    - uv.lock
+    - tests/assets/
+    - tests/conftest.py
+    - tests/helpers/
+    - vllm_omni/__init__.py
+    - vllm_omni/config/
+    - vllm_omni/envs.py
+    - vllm_omni/logger.py
+    - vllm_omni/platforms/
+    - vllm_omni/utils/
+    - vllm_omni/version.py
+
+  # --- AMD unit and cross-cutting jobs ---
+  amd_model_executor_unit:
+    - tests/model_executor/
+    - vllm_omni/model_executor/
+
+  amd_omni_processor_unit:
+    - tests/model_executor/models/test_omni_processing.py
+    - vllm_omni/inputs/
+    - vllm_omni/model_executor/models/
+    - vllm_omni/model_executor/stage_input_processors/
+
+  amd_diffusion_unit:
+    - tests/diffusion/
+    - vllm_omni/diffusion/
+    - vllm_omni/model_extras/
+
+  amd_engine_entrypoints_unit:
+    - tests/engine/
+    - tests/entrypoints/
+    - vllm_omni/engine/
+    - vllm_omni/entrypoints/
+
+  amd_other_unit:
+    - tests/attention/
+    - tests/benchmarks/
+    - tests/buildkite/
+    - tests/clients/
+    - tests/config/
+    - tests/core/
+    - tests/dfx/
+    - tests/distributed/
+    - tests/docs/
+    - tests/e2e/
+    - tests/examples/
+    - tests/host_weight_runtime/
+    - tests/inputs/
+    - tests/metrics/
+    - tests/model_extras/
+    - tests/model_tests/
+    - tests/platforms/
+    - tests/profile/
+    - tests/protocol/
+    - tests/quantization/
+    - tests/reasoning/
+    - tests/rl_rollout/
+    - tests/tools/
+    - tests/utils/
+    - tests/worker/
+    - tests/worker_v2/
+    - vllm_omni/attention/
+    - vllm_omni/benchmarks/
+    - vllm_omni/clients/
+    - vllm_omni/core/
+    - vllm_omni/distributed/
+    - vllm_omni/host_weight_runtime/
+    - vllm_omni/inputs/
+    - vllm_omni/lora/
+    - vllm_omni/metrics/
+    - vllm_omni/outputs/
+    - vllm_omni/plugins/
+    - vllm_omni/profiler/
+    - vllm_omni/protocol/
+    - vllm_omni/quantization/
+    - vllm_omni/reasoning/
+    - vllm_omni/request.py
+    - vllm_omni/sample/
+    - vllm_omni/tokenizers/
+    - vllm_omni/transformers_utils/
+    - vllm_omni/worker/
+    - vllm_omni/worker_v2/
+
+  amd_voxtral_tts_unit:
+    - tests/model_executor/models/voxtral_tts/
+    - vllm_omni/model_executor/models/voxtral_tts/
+
+  amd_diffusion_batching:
+    - tests/diffusion/batching/
+    - vllm_omni/diffusion/worker/
+    - vllm_omni/entrypoints/async_omni.py
+    - vllm_omni/inputs/
+    - vllm_omni/outputs/
+
+  amd_diffusion_cache:
+    - tests/diffusion/cache/
+    - vllm_omni/diffusion/cache/
+
+  amd_diffusion_worker:
+    - tests/diffusion/test_diffusion_worker.py
+    - vllm_omni/diffusion/worker/
+
+  amd_diffusion_lora:
+    - tests/diffusion/lora/
+    - vllm_omni/diffusion/lora/
+
+  amd_engine_model_gpu:
+    - tests/engine/
+    - tests/model_executor/
+    - vllm_omni/engine/
+    - vllm_omni/model_executor/
+
+  amd_engine_abort:
+    - tests/engine/test_async_omni_engine_abort.py
+    - vllm_omni/engine/
+
+  amd_entrypoints_gpu:
+    - tests/entrypoints/
+    - vllm_omni/entrypoints/
+
+  amd_cosyvoice3_tts_function:
+    - tests/e2e/online_serving/test_cosyvoice3_tts_expansion.py
+    - vllm_omni/model_executor/models/cosyvoice3/
+    - vllm_omni/model_executor/stage_input_processors/cosyvoice3.py
+
   # --- features ---
   diffusion_distributed_attention:
     - tests/diffusion/distributed/
@@ -225,6 +359,11 @@ source_file_dependencies:
     - examples/online_serving/qwen2_5_omni/
     - examples/online_serving/openai_chat_completion_client_for_multimodal_generation.py
     - tests/examples/online_serving/test_qwen2_5_omni.py
+
+  omni_qwen2_5_omni_function:
+    - *qwen2_5_omni
+    - tests/e2e/offline_inference/test_qwen2_5_omni_expansion.py
+    - tests/e2e/online_serving/test_qwen2_5_omni_expansion.py
 
   omni_minicpmo_4_5_function:
     - *minicpmo_4_5
@@ -436,6 +575,7 @@ source_file_dependencies:
 
   diffusion_z_image_function:
     - *z_image
+    - tests/e2e/offline_inference/test_z_image.py
     - tests/e2e/online_serving/test_z_image.py
     - tests/e2e/online_serving/test_zimage_expansion.py
 

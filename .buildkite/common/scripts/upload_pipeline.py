@@ -687,6 +687,29 @@ def _get_step_label(step: dict[str, Any]) -> str:
     return str(step.get("group") or step.get("label") or "<step>")
 
 
+def _source_dependencies_for_step(
+    step: dict[str, Any],
+    *,
+    platform: str,
+) -> list[str] | None:
+    """Resolve source dependencies, keeping AMD jobs on invalid declarations."""
+    try:
+        deps = _resolve_source_file_dependencies(step)
+    except (OSError, ValueError) as exc:
+        if platform != "amd":
+            raise
+        _log(
+            f"keep {_get_step_label(step)!r}: invalid AMD source_file_dependencies ({exc})",
+        )
+        return None
+    if platform == "amd" and deps == []:
+        _log(
+            f"keep {_get_step_label(step)!r}: empty AMD source_file_dependencies",
+        )
+        return None
+    return deps
+
+
 def _process_test_steps(
     steps: list[Any],
     changed_files: list[str] | None,
@@ -700,7 +723,7 @@ def _process_test_steps(
             processed.append(step)
             continue
 
-        deps = _resolve_source_file_dependencies(step)
+        deps = _source_dependencies_for_step(step, platform=platform)
         if changed_files is not None and deps is not None and not _match_source_file(changed_files, deps):
             _log(f"skip {_get_step_label(step)!r} (no changes under {deps})")
             continue
@@ -743,16 +766,25 @@ def _select_e2e_group_steps(steps: list[Any]) -> list[Any]:
     return selected
 
 
-def _any_source_dependency_match(steps: list[Any], changed_files: list[str]) -> bool:
+def _any_source_dependency_match(
+    steps: list[Any],
+    changed_files: list[str],
+    *,
+    platform: str = "cuda",
+) -> bool:
     """True when any step with ``source_file_dependencies`` matches *changed_files*."""
     for step in steps:
         if not isinstance(step, dict):
             continue
-        deps = _resolve_source_file_dependencies(step)
+        deps = _source_dependencies_for_step(step, platform=platform)
         if deps is not None and _match_source_file(changed_files, deps):
             return True
         nested = step.get("steps")
-        if isinstance(nested, list) and _any_source_dependency_match(nested, changed_files):
+        if isinstance(nested, list) and _any_source_dependency_match(
+            nested,
+            changed_files,
+            platform=platform,
+        ):
             return True
     return False
 
@@ -777,11 +809,29 @@ def _render_test_pipeline(
         steps = _select_e2e_group_steps(steps)
     # Bypass is a fallback: only when no job-key prefix matched.
     if changed_files is not None and pipeline_path is not None:
-        if not _any_source_dependency_match(steps, changed_files):
-            bypass = _source_filter_fallback_reason(changed_files, pipeline_path)
-            if bypass is not None:
-                _log(f"keep all jobs (no source_file_dependencies match; bypassed by {bypass})")
+        if not _any_source_dependency_match(
+            steps,
+            changed_files,
+            platform=platform,
+        ):
+            try:
+                bypass = _source_filter_fallback_reason(
+                    changed_files,
+                    pipeline_path,
+                )
+            except (OSError, ValueError) as exc:
+                if platform != "amd":
+                    raise
+                _log(
+                    f"keep all AMD jobs: invalid source dependency fallback configuration ({exc})",
+                )
                 changed_files = None
+            else:
+                if bypass is not None:
+                    _log(
+                        f"keep all jobs (no source_file_dependencies match; bypassed by {bypass})",
+                    )
+                    changed_files = None
     steps = _process_test_steps(steps, changed_files, platform=platform)
     return {**doc, "steps": steps}
 
@@ -895,7 +945,10 @@ def _render_amd_tests(context: Any) -> str:
     if not runnable:
         return ""
 
-    selected = _combine_amd_suites(runnable, context.changed_files)
+    selected = _combine_amd_suites(
+        runnable,
+        _changed_files_for_amd_source_filter(context),
+    )
     try:
         result = subprocess.run(
             [
@@ -969,6 +1022,16 @@ def _changed_files_for_source_filter(
     if force_all or e2e_only:
         return None
     return ctx.changed_files
+
+
+def _changed_files_for_amd_source_filter(ctx) -> list[str] | None:
+    """Keep scheduled main nightly complete; filter PR and post-merge suites."""
+    scheduled_nightly = os.environ.get("BUILDKITE_BRANCH", "") == "main" and os.environ.get("NIGHTLY", "0") == "1"
+    return _changed_files_for_source_filter(
+        ctx,
+        force_all=scheduled_nightly,
+        e2e_only=False,
+    )
 
 
 def _render_pipeline(

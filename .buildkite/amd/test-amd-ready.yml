@@ -8,6 +8,7 @@ steps:
 - group: ":card_index_dividers: Simple Test"
   steps:
     - label: "Simple · Model Executor Test · Shard %N/%t"
+      source_file_dependencies: [amd_ci_shared, amd_model_executor_unit]
       agent_pool: mi300_1
       parallelism: 3
       depends_on: amd-build
@@ -21,6 +22,7 @@ steps:
         - "pytest -sv tests/model_executor -m 'core_model and cpu and not omni' --num-shards=$$BUILDKITE_PARALLEL_JOB_COUNT --shard-id=$$BUILDKITE_PARALLEL_JOB"
 
     - label: "Simple · Omni Processor Test"
+      source_file_dependencies: [amd_ci_shared, amd_omni_processor_unit]
       agent_pool: mi300_1
       depends_on: amd-build
       mirror_hardwares: [amdproduction]
@@ -31,6 +33,7 @@ steps:
         - "pytest -sv tests/model_executor/models/test_omni_processing.py -m 'core_model and cpu and omni'"
 
     - label: "Simple · Diffusion Test · Shard %N/%t"
+      source_file_dependencies: [amd_ci_shared, amd_diffusion_unit]
       agent_pool: mi300_1
       parallelism: 4
       depends_on: amd-build
@@ -44,6 +47,7 @@ steps:
         - "pytest -sv tests/diffusion -m 'core_model and cpu' --ignore=tests/diffusion/cache/test_teacache_extractors.py --num-shards=$$BUILDKITE_PARALLEL_JOB_COUNT --shard-id=$$BUILDKITE_PARALLEL_JOB"
 
     - label: "Simple · Engine&Entrypoints Test"
+      source_file_dependencies: [amd_ci_shared, amd_engine_entrypoints_unit]
       agent_pool: mi300_1
       depends_on: amd-build
       mirror_hardwares: [amdproduction]
@@ -53,6 +57,7 @@ steps:
         - "pytest -sv tests/entrypoints tests/engine -m 'core_model and cpu'"
 
     - label: "Simple · Other Test"
+      source_file_dependencies: [amd_ci_shared, amd_other_unit]
       agent_pool: mi300_1
       depends_on: amd-build
       mirror_hardwares: [amdproduction]
@@ -64,6 +69,7 @@ steps:
         - "pytest -sv tests/ -m 'core_model and cpu' --ignore=tests/diffusion --ignore=tests/model_executor --ignore=tests/entrypoints --ignore=tests/engine  --ignore=tests/diffusion/cache/test_teacache_extractors.py"
 
 - label: "Custom Pipeline Test"
+  source_file_dependencies: [amd_ci_shared, custom_pipeline]
   agent_pool: mi300_1
   depends_on: amd-build
   mirror_hardwares: [amdproduction]
@@ -73,6 +79,7 @@ steps:
 
 
 - label: "Voxtral TTS CUDA Unit Test"
+  source_file_dependencies: [amd_ci_shared, amd_voxtral_tts_unit]
   agent_pool: mi300_1
   depends_on: amd-build
   mirror_hardwares: [amdproduction]
@@ -86,6 +93,7 @@ steps:
     # AITER may need to build several kernels on a cold worker, so run one
     # pytest worker with job-local build directories and a bounded timeout.
     - label: "ROCm · FlashAttention/AITER GPU Coverage"
+      source_file_dependencies: [amd_ci_shared, diffusion_distributed_attention]
       agent_pool: mi300_1
       depends_on: amd-build
       mirror_hardwares: [amdproduction]
@@ -104,6 +112,7 @@ steps:
           --run-level "core_model"
 
     - label: "Diffusion · Batch Test"
+      source_file_dependencies: [amd_ci_shared, amd_diffusion_batching]
       agent_pool: mi300_1
       depends_on: amd-build
       mirror_hardwares: [amdproduction]
@@ -112,6 +121,7 @@ steps:
         - pytest -sv tests/diffusion/batching -m 'core_model and cuda' --run-level "core_model"
 
     - label: "Diffusion · Offloader Test"
+      source_file_dependencies: [amd_ci_shared, diffusion_offloader]
       agent_pool: mi300_1
       depends_on: amd-build
       mirror_hardwares: [amdproduction]
@@ -122,6 +132,7 @@ steps:
         - pytest -s -v tests/diffusion/offloader -m "core_model and cuda" --run-level "core_model"
 
     - label: "Diffusion · Cache Test"
+      source_file_dependencies: [amd_ci_shared, amd_diffusion_cache]
       agent_pool: mi300_1
       depends_on: amd-build
       mirror_hardwares: [amdproduction]
@@ -133,6 +144,7 @@ steps:
         - pytest -sv tests/diffusion/cache -m 'core_model and cuda' --run-level "core_model"
 
     - label: "Diffusion Sequence Parallelism Test"
+      source_file_dependencies: [amd_ci_shared, diffusion_distributed_attention]
       agent_pool: mi300_2
       depends_on: amd-build
       mirror_hardwares: [amdproduction]
@@ -148,6 +160,7 @@ steps:
           --run-level "core_model"
 
     - label: "Diffusion GPU Worker Test"
+      source_file_dependencies: [amd_ci_shared, amd_diffusion_worker]
       agent_pool: mi300_2
       depends_on: amd-build
       mirror_hardwares: [amdproduction]
@@ -156,6 +169,7 @@ steps:
         - timeout 20m pytest -s -v tests/diffusion/test_diffusion_worker.py
 
     - label: "Diffusion · Model Test"
+      source_file_dependencies: [amd_ci_shared, diffusion_tiny_model]
       agent_pool: mi300_1
       depends_on: amd-build
       mirror_hardwares: [amdproduction]
@@ -170,6 +184,7 @@ steps:
           --run-level "core_model"
 
     - label: "Diffusion · Wan22 Test"
+      source_file_dependencies: [amd_ci_shared, diffusion_wan22_function]
       agent_pool: mi300_1
       depends_on: amd-build
       mirror_hardwares: [amdproduction]
@@ -195,6 +210,7 @@ steps:
 #     - timeout 20m pytest -s -v tests/e2e/offline_inference/test_stable_audio_expansion.py -m "advanced_model and diffusion and L4" --run-level advanced_model
 
 - label: "ROCm · Engine & Model Executor GPU Coverage (R2-01)"
+  source_file_dependencies: [amd_ci_shared, amd_engine_model_gpu]
   agent_pool: mi300_1
   depends_on: amd-build
   mirror_hardwares: [amdproduction]
@@ -228,6 +244,7 @@ steps:
       "$$R2_01_ARTIFACT_DIR/pytest-summary.txt"
 
 - label: "Engine Test"
+  source_file_dependencies: [amd_ci_shared, amd_engine_abort]
   agent_pool: mi300_1
   depends_on: amd-build
   mirror_hardwares: [amdproduction]
@@ -240,6 +257,7 @@ steps:
       '
 
 - label: "ROCm · Entrypoints GPU Coverage (R2-02)"
+  source_file_dependencies: [amd_ci_shared, amd_entrypoints_gpu]
   agent_pool: mi300_1
   depends_on: amd-build
   mirror_hardwares: [amdproduction]
@@ -318,6 +336,7 @@ steps:
 - group: ":card_index_dividers: E2E Test"
   steps:
     - label: "Qwen3-TTS E2E Test"
+      source_file_dependencies: [amd_ci_shared, tts_qwen3_tts_function]
       agent_pool: mi300_1
       depends_on: amd-build
       mirror_hardwares: [amdproduction]
@@ -329,6 +348,7 @@ steps:
         - timeout 30m pytest -s -v tests/e2e/online_serving/test_qwen3_tts_customvoice.py -m "core_model" --run-level "core_model"
 
     - label: "CosyVoice3-TTS E2E Test"
+      source_file_dependencies: [amd_ci_shared, amd_cosyvoice3_tts_function]
       agent_pool: mi300_1
       depends_on: amd-build
       mirror_hardwares: [amdproduction]

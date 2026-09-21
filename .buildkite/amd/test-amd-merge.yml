@@ -8,6 +8,7 @@ steps:
 - group: ":card_index_dividers: Simple Test"
   steps:
     - label: "Simple · Model Executor Test · Shard %N/%t"
+      source_file_dependencies: [amd_ci_shared, amd_model_executor_unit]
       agent_pool: mi300_1
       parallelism: 3
       depends_on: amd-build
@@ -21,6 +22,7 @@ steps:
         - "pytest -sv tests/model_executor -m 'core_model and cpu and not omni' --num-shards=$$BUILDKITE_PARALLEL_JOB_COUNT --shard-id=$$BUILDKITE_PARALLEL_JOB"
 
     - label: "Simple · Omni Processor Test"
+      source_file_dependencies: [amd_ci_shared, amd_omni_processor_unit]
       agent_pool: mi300_1
       depends_on: amd-build
       mirror_hardwares: [amdproduction]
@@ -31,6 +33,7 @@ steps:
         - "pytest -sv tests/model_executor/models/test_omni_processing.py -m 'core_model and cpu and omni'"
 
     - label: "Simple · Diffusion Test · Shard %N/%t"
+      source_file_dependencies: [amd_ci_shared, amd_diffusion_unit]
       agent_pool: mi300_1
       parallelism: 4
       depends_on: amd-build
@@ -44,6 +47,7 @@ steps:
         - "pytest -sv tests/diffusion -m 'core_model and cpu' --ignore=tests/diffusion/cache/test_teacache_extractors.py --num-shards=$$BUILDKITE_PARALLEL_JOB_COUNT --shard-id=$$BUILDKITE_PARALLEL_JOB"
 
     - label: "Simple · Engine&Entrypoints Test"
+      source_file_dependencies: [amd_ci_shared, amd_engine_entrypoints_unit]
       agent_pool: mi300_1
       depends_on: amd-build
       mirror_hardwares: [amdproduction]
@@ -53,6 +57,7 @@ steps:
         - "pytest -sv tests/entrypoints tests/engine -m 'core_model and cpu'"
 
     - label: "Simple · Other Test"
+      source_file_dependencies: [amd_ci_shared, amd_other_unit]
       agent_pool: mi300_1
       depends_on: amd-build
       mirror_hardwares: [amdproduction]
@@ -66,6 +71,7 @@ steps:
 - group: ":card_index_dividers: Diffusion Test"
   steps:
     - label: "Diffusion · LoRA Test"
+      source_file_dependencies: [amd_ci_shared, amd_diffusion_lora]
       agent_pool: mi300_1
       depends_on: amd-build
       mirror_hardwares: [amdproduction]
@@ -76,6 +82,7 @@ steps:
         - pytest -sv tests/diffusion/lora/ -m 'advanced_model and cuda' --run-level "advanced_model" 2>&1 | tee lora-server.log
 
     - label: "Diffusion Model CPU offloading Test"
+      source_file_dependencies: [amd_ci_shared, diffusion_offloader]
       agent_pool: mi300_1
       depends_on: amd-build
       mirror_hardwares: [amdproduction]
@@ -90,6 +97,7 @@ steps:
 
     # TODO: Diagnose unstable Stable Audio layerwise-offload memory savings on ROCm.
     - label: "Diffusion Stable Audio Layerwise Offload Test (quarantined)"
+      source_file_dependencies: [amd_ci_shared, diffusion_offloader]
       agent_pool: mi300_1
       depends_on: amd-build
       mirror_hardwares: [amdproduction]
@@ -102,6 +110,7 @@ steps:
           'tests/diffusion/offloader/test_diffusion_layerwise_offload.py::test_layerwise_offload_diffusion_model[stabilityai/stable-audio-open-1.0]'
 
     - label: "Diffusion Sequence Parallelism Test (Need 4 GPUs) · Shard 1/2"
+      source_file_dependencies: [amd_ci_shared, diffusion_distributed_attention]
       agent_pool: mi300_4
       depends_on: amd-build
       mirror_hardwares: [amdproduction]
@@ -113,6 +122,7 @@ steps:
         - pytest -s -v tests/diffusion/distributed/test_sequence_parallel.py
 
     - label: "Diffusion Sequence Parallelism Test (Need 4 GPUs) · Shard 2/2"
+      source_file_dependencies: [amd_ci_shared, diffusion_distributed_attention]
       agent_pool: mi300_4
       depends_on: amd-build
       mirror_hardwares: [amdproduction]
@@ -125,6 +135,7 @@ steps:
 
     # merge-only tests
     - label: "Diffusion Tensor Parallelism Test"
+      source_file_dependencies: [amd_ci_shared, diffusion_distributed_attention]
       agent_pool: mi300_2
       depends_on: amd-build
       mirror_hardwares: [amdproduction]
@@ -133,6 +144,7 @@ steps:
         - pytest -s -v tests/diffusion/distributed/test_tensor_parallel.py
 
     - label: "Diffusion Model Test"
+      source_file_dependencies: [amd_ci_shared, diffusion_z_image_function]
       agent_pool: mi300_1
       depends_on: amd-build
       mirror_hardwares: [amdproduction]
@@ -141,6 +153,7 @@ steps:
         - timeout 30m pytest -s -v tests/e2e/offline_inference/test_z_image.py
 
     - label: "Diffusion GPU Worker Test"
+      source_file_dependencies: [amd_ci_shared, amd_diffusion_worker]
       agent_pool: mi300_2
       depends_on: amd-build
       mirror_hardwares: [amdproduction]
@@ -149,6 +162,7 @@ steps:
         - timeout 20m pytest -s -v tests/diffusion/test_diffusion_worker.py
 
     - label: "Diffusion · Wan22 Test"
+      source_file_dependencies: [amd_ci_shared, diffusion_wan22_function]
       agent_pool: mi300_1
       depends_on: amd-build
       mirror_hardwares: [amdproduction]
@@ -173,6 +187,7 @@ steps:
 #     - timeout 20m pytest -s -v tests/e2e/offline_inference/test_stable_audio_expansion.py -m "advanced_model and diffusion and L4" --run-level advanced_model
 
 - label: "Engine Test"
+  source_file_dependencies: [amd_ci_shared, amd_engine_abort]
   agent_pool: mi300_1
   depends_on: amd-build
   mirror_hardwares: [amdproduction]
@@ -188,6 +203,7 @@ steps:
 - group: ":card_index_dividers: E2E Test"
   steps:
     - label: "Omni Model Test Qwen2-5-Omni"
+      source_file_dependencies: [amd_ci_shared, omni_qwen2_5_omni_function]
       agent_pool: mi300_4
       depends_on: amd-build
       mirror_hardwares: [amdproduction]
@@ -196,6 +212,7 @@ steps:
         - pytest -s -v tests/e2e/*/test_qwen2_5_omni_expansion.py --run-level "core_model"
 
     - label: "Omni Model Test Qwen3-Omni"
+      source_file_dependencies: [amd_ci_shared, omni_qwen3_omni_function]
       agent_pool: mi300_2
       depends_on: amd-build
       mirror_hardwares: [amdproduction]
@@ -205,6 +222,7 @@ steps:
         - pytest -s -v tests/e2e/offline_inference/test_qwen3_omni.py tests/e2e/online_serving/test_qwen3_omni.py tests/e2e/offline_inference/test_qwen3_omni_colocate_async.py -m 'advanced_model and cuda' --run-level 'advanced_model'
 
     - label: "Qwen3-TTS CustomVoice E2E Test · Shard %N/%t"
+      source_file_dependencies: [amd_ci_shared, tts_qwen3_tts_function]
       agent_pool: mi300_1
       parallelism: 3
       depends_on: amd-build
@@ -229,6 +247,7 @@ steps:
     # TODO: Restore this case to the blocking sharded step once its long-running
     # Whisper validation on AMD CI is resolved.
     - label: "Qwen3-TTS CustomVoice async_chunk Test (quarantined)"
+      source_file_dependencies: [amd_ci_shared, tts_qwen3_tts_function]
       agent_pool: mi300_1
       depends_on: amd-build
       mirror_hardwares: [amdproduction]
@@ -244,6 +263,7 @@ steps:
           '
 
     - label: "Qwen3-TTS Base E2E Test"
+      source_file_dependencies: [amd_ci_shared, tts_qwen3_tts_function]
       agent_pool: mi300_1
       depends_on: amd-build
       mirror_hardwares: [amdproduction]
