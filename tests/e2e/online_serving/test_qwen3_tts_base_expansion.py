@@ -69,7 +69,7 @@ tts_no_async_chunk_server_params = [
 DEFAULT_AUDIO_SPEECH_TIMEOUT_S = 180.0
 
 
-@hardware_test(res={"cuda": ["L4", "B200"]}, num_cards=1)
+@hardware_test(res={"cuda": ["L4", "B200"], "rocm": "MI325"}, num_cards=1)
 @pytest.mark.parametrize(
     "omni_server",
     tts_async_chunk_server_params + tts_no_async_chunk_server_params,
