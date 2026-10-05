@@ -37,6 +37,12 @@ steps:
       mirror_hardwares: [amdproduction]
       grade: Blocking
       timeout_in_minutes: 45
+      # ROCm hardware hangs abort pytest with 134 and poison the pod. Retry once
+      # on a fresh worker; assertion failures and OOMs remain non-retryable.
+      retry:
+        automatic:
+          - exit_status: 134
+            limit: 1
       commands:
         - export VLLM_ROCM_USE_AITER=0
         # ignore test_teacache_extractors.py because it use rocm gemm kernel from vLLM
