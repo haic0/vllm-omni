@@ -37,8 +37,9 @@ steps:
       mirror_hardwares: [amdproduction]
       grade: Blocking
       timeout_in_minutes: 45
-      # ROCm hardware hangs abort pytest with 134 and poison the pod. Retry once
-      # on a fresh worker; assertion failures and OOMs remain non-retryable.
+      # Buildkite's status-based rule cannot prove every exit 134 is a GPU hang.
+      # It retries 134 once; the Kubernetes job retry starts a fresh pod.
+      # Assertions (1), timeouts (124), and OOMs (137) remain non-retryable.
       retry:
         automatic:
           - exit_status: 134
