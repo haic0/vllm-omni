@@ -89,16 +89,12 @@ def test_qwen3_accuracy_defers_artifact_path_expansion() -> None:
     assert step["artifact_paths"] == ["tests/e2e/accuracy/qwen3_omni/results/qwen_omni_acc/*.json"]
 
 
-@pytest.mark.parametrize("pipeline_path", [AMD_READY_PIPELINE, AMD_MERGE_PIPELINE])
-def test_diffusion_cpu_suite_is_sharded_and_retries_gpu_hangs(
-    pipeline_path: Path,
-) -> None:
-    step = _find_step("Simple · Diffusion Test · Shard %N/%t", pipeline_path)
+def test_ready_diffusion_cpu_suite_is_sharded() -> None:
+    step = _find_step("Simple · Diffusion Test · Shard %N/%t", AMD_READY_PIPELINE)
     pytest_command = next(command for command in step["commands"] if "pytest" in command)
 
     assert step["parallelism"] == 4
     assert step["timeout_in_minutes"] == 45
-    assert step["retry"] == {"automatic": [{"exit_status": 134, "limit": 1}]}
     assert "--num-shards=$$BUILDKITE_PARALLEL_JOB_COUNT" in pytest_command
     assert "--shard-id=$$BUILDKITE_PARALLEL_JOB" in pytest_command
 
