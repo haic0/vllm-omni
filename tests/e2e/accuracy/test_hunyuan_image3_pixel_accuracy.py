@@ -42,6 +42,7 @@ WIDTH = 1024
 PROMPT = "A brown and white dog is running on the grass."
 MEAN_THRESHOLD = 3e-2
 P99_THRESHOLD = 3e-1
+PSNR_THRESHOLD_ROCM = 29.0
 PSNR_THRESHOLD_NPU = 26.0
 
 # Per-device SSIM/PSNR for online/offline vs baseline. Unlisted devices use ``default``.
@@ -56,6 +57,8 @@ def _psnr_threshold(thresholds: SimilarityThresholds | None = None) -> float:
 
     if current_omni_platform.is_npu():
         return PSNR_THRESHOLD_NPU
+    if current_omni_platform.is_rocm():
+        return PSNR_THRESHOLD_ROCM
     if thresholds is None:
         thresholds = resolve_similarity_thresholds(SIMILARITY_THRESHOLDS_BY_DEVICE)
     return thresholds.psnr
