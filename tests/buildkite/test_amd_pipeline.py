@@ -89,26 +89,57 @@ def test_ar_paged_attention_gpu_lane_is_blocking_and_pinned() -> None:
     assert lane_definitions[0] == lane_definitions[1]
 
 
-def test_joy_gpu_lane_is_blocking_and_preserves_default_backend() -> None:
-    lane_definitions = []
-    for pipeline_path in (AMD_READY_PIPELINE, AMD_MERGE_PIPELINE):
-        step = _find_step(JOY_GPU_LABEL, pipeline_path)
-        lane_definitions.append(step)
-        assert step["grade"] == "Blocking"
-        assert step["agent_pool"] == "mi300_1"
-        assert step["timeout_in_minutes"] == 30
-        assert step["artifact_paths"] == ["artifacts/joy-image-gpu/*.xml"]
-        assert (
-            'export JOY_GPU_ARTIFACT_DIR="$$BUILDKITE_BUILD_CHECKOUT_PATH/artifacts/joy-image-gpu"' in step["commands"]
-        )
-        assert "export VLLM_ROCM_USE_AITER=1" in step["commands"]
-        assert all("DIFFUSION_ATTENTION_BACKEND" not in command for command in step["commands"])
-        argv = split(next(command for command in step["commands"] if "pytest" in command))
-        assert argv[:4] == ["timeout", "--signal=TERM", "--kill-after=2m", "25m"]
-        assert JOY_GPU_PATH in argv
-        assert argv[argv.index("-m") + 1] == AR_PAGED_ATTENTION_MARKERS
-        assert "--junitxml=$$JOY_GPU_ARTIFACT_DIR/pytest.xml" in argv
-    assert lane_definitions[0] == lane_definitions[1]
+def _find_joy_gpu_steps(pipeline_path: Path) -> list[dict]:
+    pipeline = yaml.safe_load(pipeline_path.read_text(encoding="utf-8"))
+    matches = []
+
+    def walk(steps: list[dict]) -> None:
+        for step in steps:
+            if step.get("label") == JOY_GPU_LABEL or any(
+                arg == JOY_GPU_PATH or arg.startswith(f"{JOY_GPU_PATH}::")
+                for command in step.get("commands", [])
+                for arg in split(command)
+            ):
+                matches.append(step)
+            walk(step.get("steps", []))
+
+    walk(pipeline.get("steps", []))
+    return matches
+
+
+@pytest.mark.parametrize("pipeline_path", [AMD_READY_PIPELINE, AMD_MERGE_PIPELINE], ids=["ready", "merge"])
+def test_joy_gpu_lane_is_not_on_amd_ready_or_merge_critical_path(pipeline_path: Path) -> None:
+    assert not _find_joy_gpu_steps(pipeline_path)
+
+
+def test_joy_gpu_nightly_lane_is_unique_nonblocking_and_preserves_default_backend() -> None:
+    steps = _find_joy_gpu_steps(AMD_NIGHTLY_PIPELINE)
+    assert len(steps) == 1
+    step = steps[0]
+    assert step["label"] == JOY_GPU_LABEL
+    assert step["grade"] == "NonBlocking"
+    assert step["agent_pool"] == "mi300_1"
+    assert step["depends_on"] == "amd-build"
+    assert step["mirror_hardwares"] == ["amdproduction"]
+    assert step["timeout_in_minutes"] == 90
+    assert step["artifact_paths"] == ["artifacts/joy-image-gpu/*.xml"]
+    assert 'export JOY_GPU_ARTIFACT_DIR="$$BUILDKITE_BUILD_CHECKOUT_PATH/artifacts/joy-image-gpu"' in step["commands"]
+    assert 'export AITER_JIT_DIR="/tmp/vllm-omni-joy-aiter-$$BUILDKITE_JOB_ID"' in step["commands"]
+    assert 'export TORCH_EXTENSIONS_DIR="/tmp/vllm-omni-joy-torch-$$BUILDKITE_JOB_ID"' in step["commands"]
+    assert 'mkdir -p "$$AITER_JIT_DIR" "$$TORCH_EXTENSIONS_DIR" "$$JOY_GPU_ARTIFACT_DIR"' in step["commands"]
+    assert "export VLLM_ROCM_USE_AITER=1" in step["commands"]
+    assert all("DIFFUSION_ATTENTION_BACKEND" not in command for command in step["commands"])
+    pytest_commands = [command for command in step["commands"] if "pytest" in split(command)]
+    assert len(pytest_commands) == 1
+    assert "|| true" not in pytest_commands[0]
+    argv = split(pytest_commands[0])
+    assert argv[:4] == ["timeout", "--signal=TERM", "--kill-after=2m", "80m"]
+    assert argv.count(JOY_GPU_PATH) == 1
+    assert "-k" not in argv
+    assert argv[argv.index("-m") + 1] == AR_PAGED_ATTENTION_MARKERS
+    assert argv[argv.index("--run-level") + 1] == "core_model"
+    assert "--durations=20" in argv
+    assert "--junitxml=$$JOY_GPU_ARTIFACT_DIR/pytest.xml" in argv
 
 
 def test_joy_gpu_suite_remains_selected_by_cuda_model_lane() -> None:

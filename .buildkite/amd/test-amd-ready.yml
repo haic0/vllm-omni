@@ -148,29 +148,6 @@ steps:
           tests/diffusion/models/mammoth_moda2/test_dit_attention_cuda.py
           --run-level "core_model"
 
-    # JoyImage's tiny transformer and layerwise forwards are GPU work.
-    # Exercise platform-default AITER attention under the serving inference
-    # contract, independently of the nonblocking broad attention suite.
-    - label: "Diffusion · JoyImage GPU Inference Test"
-      agent_pool: mi300_1
-      depends_on: amd-build
-      mirror_hardwares: [amdproduction]
-      grade: Blocking
-      timeout_in_minutes: 30
-      artifact_paths:
-        - "artifacts/joy-image-gpu/*.xml"
-      commands:
-        - export VLLM_ROCM_USE_AITER=1
-        - export AITER_JIT_DIR="/tmp/vllm-omni-joy-aiter-$$BUILDKITE_JOB_ID"
-        - export TORCH_EXTENSIONS_DIR="/tmp/vllm-omni-joy-torch-$$BUILDKITE_JOB_ID"
-        - export JOY_GPU_ARTIFACT_DIR="$$BUILDKITE_BUILD_CHECKOUT_PATH/artifacts/joy-image-gpu"
-        - mkdir -p "$$AITER_JIT_DIR" "$$TORCH_EXTENSIONS_DIR" "$$JOY_GPU_ARTIFACT_DIR"
-        - >-
-          timeout --signal=TERM --kill-after=2m 25m
-          pytest -sv tests/diffusion/models/joy_image/test_joy_image_gpu.py
-          -m 'core_model and rocm and MI325 and cards_1' --run-level core_model
-          --durations=20 --junitxml="$$JOY_GPU_ARTIFACT_DIR/pytest.xml"
-
     # AR paged attention is real GPU work, including cold AITER compilation.
     # Keep its complete numerical matrix out of the CPU-marked Simple shards.
     - label: "ROCm · AR Diffusion Paged Attention GPU Test"
@@ -255,7 +232,7 @@ steps:
       commands:
         # Preserve legacy one-GPU tests without cards_1 while excluding every
         # registered multi-GPU marker from this one-GPU job.
-        # JoyImage's blocking READY/MERGE lanes own its cold AITER builds.
+        # JoyImage's nonblocking nightly lane owns its cold AITER builds.
         - >-
           timeout 15m pytest -sv tests/diffusion/models/
           --ignore=tests/diffusion/models/auk/test_auk_vae_fastpath.py
