@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM-Omni project
 
+from importlib.util import find_spec
 from pathlib import Path
 from shlex import split
 
@@ -118,6 +119,15 @@ def test_joy_gpu_suite_remains_selected_by_cuda_model_lane() -> None:
     assert argv[argv.index("-m") + 1] == "core_model and cuda"
     # Module-level CPU marks cannot be cancelled by adding GPU marks.
     assert "pytest.mark.cpu" not in Path(JOY_GPU_PATH).read_text(encoding="utf-8")
+
+
+def test_joy_gpu_helper_import_does_not_require_pytest_package_mode() -> None:
+    source = Path(JOY_GPU_PATH).read_text(encoding="utf-8")
+    assert "from . import" not in source
+    assert "from tests.diffusion.models.joy_image import test_joy_image as joy_units" in source
+    spec = find_spec("tests.diffusion.models.joy_image.test_joy_image")
+    assert spec is not None
+    assert Path(spec.origin).resolve() == Path(JOY_GPU_PATH).with_name("test_joy_image.py").resolve()
 
 
 def test_qwen3_tts_base_preserves_advanced_model_arguments() -> None:

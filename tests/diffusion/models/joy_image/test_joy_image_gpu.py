@@ -5,6 +5,7 @@
 import pytest
 import torch
 
+from tests.diffusion.models.joy_image import test_joy_image as joy_units
 from tests.helpers.mark import hardware_marks
 from vllm_omni.diffusion.attention.layer import Attention
 from vllm_omni.diffusion.attention.selector import get_attn_backend_for_role
@@ -14,8 +15,6 @@ from vllm_omni.diffusion.models.joy_image.joy_image_edit_transformer import (
     JoyImageAttention,
     JoyImageEditTransformer3DModel,
 )
-
-from . import test_joy_image as joy_units
 
 pytestmark = [
     pytest.mark.core_model,
