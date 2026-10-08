@@ -43,6 +43,8 @@ TRANSFORM = {
 
 def test_delta_factors_apply_the_vdn_solve_rule():
     torch.manual_seed(0)
+    if torch.version.hip is not None and not torch.cuda.is_available():
+        pytest.skip("ROCm GPU required for the LAPACK-free solve-rule path")
     device = torch.device("cuda" if torch.version.hip is not None else "cpu")
     k = torch.nn.functional.normalize(torch.randn(3, 2, 6, 4, dtype=torch.float64, device=device), dim=-1)
     A = k.transpose(-1, -2) @ k
