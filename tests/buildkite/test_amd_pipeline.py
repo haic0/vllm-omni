@@ -16,6 +16,8 @@ AMD_TEMPLATE = Path(".buildkite/amd/test-template-amd-omni.j2")
 AR_PAGED_ATTENTION_LABEL = "ROCm · AR Diffusion Paged Attention GPU Test"
 DIFFUSION_GROUP = ":card_index_dividers: Diffusion Test"
 AR_PAGED_ATTENTION_MARKERS = "core_model and rocm and MI325 and cards_1"
+JOY_GPU_LABEL = "Diffusion · JoyImage GPU Inference Test"
+JOY_GPU_PATH = "tests/diffusion/models/joy_image/test_joy_image_gpu.py"
 DIFFUSION_CPU_MARKERS = (
     "core_model and cpu and not (cards_2 or cards_3 or cards_4 or cards_5 or cards_6 or cards_7 or cards_8)"
 )
@@ -84,6 +86,35 @@ def test_ar_paged_attention_gpu_lane_is_blocking_and_pinned() -> None:
         assert argv[argv.index("--run-level") + 1] == "core_model"
 
     assert lane_definitions[0] == lane_definitions[1]
+
+
+def test_joy_gpu_lane_is_blocking_and_preserves_default_backend() -> None:
+    lane_definitions = []
+    for pipeline_path in (AMD_READY_PIPELINE, AMD_MERGE_PIPELINE):
+        step = _find_step(JOY_GPU_LABEL, pipeline_path)
+        lane_definitions.append(step)
+        assert step["grade"] == "Blocking"
+        assert step["agent_pool"] == "mi300_1"
+        assert step["timeout_in_minutes"] == 30
+        assert step["artifact_paths"] == ["artifacts/joy-image-gpu.xml"]
+        assert "export VLLM_ROCM_USE_AITER=1" in step["commands"]
+        assert all("DIFFUSION_ATTENTION_BACKEND" not in command for command in step["commands"])
+        argv = split(next(command for command in step["commands"] if "pytest" in command))
+        assert argv[:4] == ["timeout", "--signal=TERM", "--kill-after=2m", "25m"]
+        assert JOY_GPU_PATH in argv
+        assert argv[argv.index("-m") + 1] == AR_PAGED_ATTENTION_MARKERS
+        assert "--junitxml=artifacts/joy-image-gpu.xml" in argv
+    assert lane_definitions[0] == lane_definitions[1]
+
+
+def test_joy_gpu_suite_remains_selected_by_cuda_model_lane() -> None:
+    pipeline_path = Path(".buildkite/cuda/test-ready.yml")
+    step = _find_step("Diffusion · Model Test", pipeline_path)
+    argv = split(next(command for command in step["commands"] if "pytest" in command))
+    assert "tests/diffusion/models/" in argv
+    assert argv[argv.index("-m") + 1] == "core_model and cuda"
+    # Module-level CPU marks cannot be cancelled by adding GPU marks.
+    assert "pytest.mark.cpu" not in Path(JOY_GPU_PATH).read_text(encoding="utf-8")
 
 
 def test_qwen3_tts_base_preserves_advanced_model_arguments() -> None:

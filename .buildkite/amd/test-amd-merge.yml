@@ -100,6 +100,28 @@ steps:
 
 - group: ":card_index_dividers: Diffusion Test"
   steps:
+    # JoyImage's tiny transformer and layerwise forwards are GPU work.
+    # Exercise platform-default AITER attention under the serving inference
+    # contract, independently of the nonblocking broad attention suite.
+    - label: "Diffusion · JoyImage GPU Inference Test"
+      agent_pool: mi300_1
+      depends_on: amd-build
+      mirror_hardwares: [amdproduction]
+      grade: Blocking
+      timeout_in_minutes: 30
+      artifact_paths:
+        - "artifacts/joy-image-gpu.xml"
+      commands:
+        - export VLLM_ROCM_USE_AITER=1
+        - export AITER_JIT_DIR="/tmp/vllm-omni-joy-aiter-$$BUILDKITE_JOB_ID"
+        - export TORCH_EXTENSIONS_DIR="/tmp/vllm-omni-joy-torch-$$BUILDKITE_JOB_ID"
+        - mkdir -p "$$AITER_JIT_DIR" "$$TORCH_EXTENSIONS_DIR" artifacts
+        - >-
+          timeout --signal=TERM --kill-after=2m 25m
+          pytest -sv tests/diffusion/models/joy_image/test_joy_image_gpu.py
+          -m 'core_model and rocm and MI325 and cards_1' --run-level core_model
+          --durations=20 --junitxml=artifacts/joy-image-gpu.xml
+
     # AR paged attention is real GPU work, including cold AITER compilation.
     # Keep its complete numerical matrix out of the CPU-marked Simple shards.
     - label: "ROCm · AR Diffusion Paged Attention GPU Test"
