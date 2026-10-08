@@ -16,6 +16,10 @@ AMD_TEMPLATE = Path(".buildkite/amd/test-template-amd-omni.j2")
 AR_PAGED_ATTENTION_LABEL = "ROCm · AR Diffusion Paged Attention GPU Test"
 DIFFUSION_GROUP = ":card_index_dividers: Diffusion Test"
 AR_PAGED_ATTENTION_MARKERS = "core_model and rocm and MI325 and cards_1"
+DIFFUSION_CPU_MARKERS = (
+    "core_model and cpu and not (cards_2 or cards_3 or cards_4 or cards_5 or cards_6 or cards_7 or cards_8)"
+)
+DIFFUSION_CPU_ARTIFACTS = "artifacts/amd-diffusion-cpu-shards/*.xml"
 
 
 def _find_step(label: str, pipeline_path: Path = AMD_MERGE_PIPELINE) -> dict:
@@ -39,6 +43,25 @@ def _find_group(label: str, pipeline_path: Path) -> dict:
     group = next((step for step in pipeline.get("steps", []) if step.get("group") == label), None)
     assert group is not None, f"missing AMD pipeline group: {label}"
     return group
+
+
+def _find_diffusion_cpu_shard_step(pipeline_path: Path) -> dict:
+    pipeline = yaml.safe_load(pipeline_path.read_text(encoding="utf-8"))
+    matches = []
+
+    def walk(steps: list[dict]) -> None:
+        for step in steps:
+            commands = step.get("commands", [])
+            if any(
+                "pytest -sv tests/diffusion" in command and "--num-shards=$$BUILDKITE_PARALLEL_JOB_COUNT" in command
+                for command in commands
+            ):
+                matches.append(step)
+            walk(step.get("steps", []))
+
+    walk(pipeline.get("steps", []))
+    assert len(matches) == 1, f"expected one diffusion CPU shard step in {pipeline_path}"
+    return matches[0]
 
 
 def test_ar_paged_attention_gpu_lane_is_blocking_and_pinned() -> None:
@@ -89,14 +112,33 @@ def test_qwen3_accuracy_defers_artifact_path_expansion() -> None:
     assert step["artifact_paths"] == ["tests/e2e/accuracy/qwen3_omni/results/qwen_omni_acc/*.json"]
 
 
-def test_ready_diffusion_cpu_suite_is_sharded() -> None:
-    step = _find_step("Simple · Diffusion Test · Shard %N/%t", AMD_READY_PIPELINE)
+@pytest.mark.parametrize(
+    "pipeline_path",
+    [AMD_READY_PIPELINE, AMD_MERGE_PIPELINE],
+    ids=["ready", "merge"],
+)
+def test_diffusion_cpu_suite_shard_contract(pipeline_path: Path) -> None:
+    step = _find_diffusion_cpu_shard_step(pipeline_path)
     pytest_command = next(command for command in step["commands"] if "pytest" in command)
+    argv = split(pytest_command)
 
-    assert step["parallelism"] == 4
-    assert step["timeout_in_minutes"] == 45
+    assert step["label"].endswith("Shard %N/%t")
+    assert step["parallelism"] == 5
+    assert step["timeout_in_minutes"] == 60
+    assert step["artifact_paths"] == [DIFFUSION_CPU_ARTIFACTS]
+    assert "mkdir -p artifacts/amd-diffusion-cpu-shards" in step["commands"]
+    assert argv[:3] == ["pytest", "-sv", "tests/diffusion"]
+    assert argv[argv.index("-m") + 1] == DIFFUSION_CPU_MARKERS
+    assert "--ignore=tests/diffusion/cache/test_teacache_extractors.py" in argv
+    assert "--ignore=tests/diffusion/models/pi05/test_pi05_units.py" in argv
     assert "--num-shards=$$BUILDKITE_PARALLEL_JOB_COUNT" in pytest_command
     assert "--shard-id=$$BUILDKITE_PARALLEL_JOB" in pytest_command
+    assert "--durations=50" in argv
+    assert (
+        "--junitxml=artifacts/amd-diffusion-cpu-shards/"
+        "pytest-$${BUILDKITE_PARALLEL_JOB}-of-$${BUILDKITE_PARALLEL_JOB_COUNT}.xml" in argv
+    )
+    assert "|| true" not in pytest_command
 
 
 def test_z_image_merge_timeout_covers_cold_aiter_compile() -> None:
