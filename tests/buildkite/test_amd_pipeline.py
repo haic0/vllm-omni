@@ -126,7 +126,7 @@ def test_joy_gpu_helper_import_does_not_require_pytest_package_mode() -> None:
     assert "from . import" not in source
     assert "from tests.diffusion.models.joy_image import test_joy_image as joy_units" in source
     spec = find_spec("tests.diffusion.models.joy_image.test_joy_image")
-    assert spec is not None
+    assert spec is not None and spec.origin is not None
     assert Path(spec.origin).resolve() == Path(JOY_GPU_PATH).with_name("test_joy_image.py").resolve()
 
 
