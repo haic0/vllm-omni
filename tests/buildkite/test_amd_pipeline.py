@@ -96,14 +96,17 @@ def test_joy_gpu_lane_is_blocking_and_preserves_default_backend() -> None:
         assert step["grade"] == "Blocking"
         assert step["agent_pool"] == "mi300_1"
         assert step["timeout_in_minutes"] == 30
-        assert step["artifact_paths"] == ["artifacts/joy-image-gpu.xml"]
+        assert step["artifact_paths"] == ["artifacts/joy-image-gpu/*.xml"]
+        assert (
+            'export JOY_GPU_ARTIFACT_DIR="$$BUILDKITE_BUILD_CHECKOUT_PATH/artifacts/joy-image-gpu"' in step["commands"]
+        )
         assert "export VLLM_ROCM_USE_AITER=1" in step["commands"]
         assert all("DIFFUSION_ATTENTION_BACKEND" not in command for command in step["commands"])
         argv = split(next(command for command in step["commands"] if "pytest" in command))
         assert argv[:4] == ["timeout", "--signal=TERM", "--kill-after=2m", "25m"]
         assert JOY_GPU_PATH in argv
         assert argv[argv.index("-m") + 1] == AR_PAGED_ATTENTION_MARKERS
-        assert "--junitxml=artifacts/joy-image-gpu.xml" in argv
+        assert "--junitxml=$$JOY_GPU_ARTIFACT_DIR/pytest.xml" in argv
     assert lane_definitions[0] == lane_definitions[1]
 
 
@@ -157,7 +160,11 @@ def test_diffusion_cpu_suite_shard_contract(pipeline_path: Path) -> None:
     assert step["parallelism"] == 5
     assert step["timeout_in_minutes"] == 60
     assert step["artifact_paths"] == [DIFFUSION_CPU_ARTIFACTS]
-    assert "mkdir -p artifacts/amd-diffusion-cpu-shards" in step["commands"]
+    assert (
+        'export DIFFUSION_CPU_ARTIFACT_DIR="$$BUILDKITE_BUILD_CHECKOUT_PATH/artifacts/amd-diffusion-cpu-shards"'
+        in step["commands"]
+    )
+    assert 'mkdir -p "$$DIFFUSION_CPU_ARTIFACT_DIR"' in step["commands"]
     assert argv[:3] == ["pytest", "-sv", "tests/diffusion"]
     assert argv[argv.index("-m") + 1] == DIFFUSION_CPU_MARKERS
     assert "--ignore=tests/diffusion/cache/test_teacache_extractors.py" in argv
@@ -166,7 +173,7 @@ def test_diffusion_cpu_suite_shard_contract(pipeline_path: Path) -> None:
     assert "--shard-id=$$BUILDKITE_PARALLEL_JOB" in pytest_command
     assert "--durations=50" in argv
     assert (
-        "--junitxml=artifacts/amd-diffusion-cpu-shards/"
+        "--junitxml=$$DIFFUSION_CPU_ARTIFACT_DIR/"
         "pytest-$${BUILDKITE_PARALLEL_JOB}-of-$${BUILDKITE_PARALLEL_JOB_COUNT}.xml" in argv
     )
     assert "|| true" not in pytest_command
