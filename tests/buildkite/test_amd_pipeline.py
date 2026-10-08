@@ -116,9 +116,26 @@ def test_joy_gpu_suite_remains_selected_by_cuda_model_lane() -> None:
     step = _find_step("Diffusion · Model Test", pipeline_path)
     argv = split(next(command for command in step["commands"] if "pytest" in command))
     assert "tests/diffusion/models/" in argv
+    assert f"--ignore={JOY_GPU_PATH}" not in argv
     assert argv[argv.index("-m") + 1] == "core_model and cuda"
     # Module-level CPU marks cannot be cancelled by adding GPU marks.
     assert "pytest.mark.cpu" not in Path(JOY_GPU_PATH).read_text(encoding="utf-8")
+
+
+def test_joy_gpu_suite_is_not_duplicated_in_amd_model_lane() -> None:
+    step = _find_step("Diffusion · Model Test", AMD_READY_PIPELINE)
+    argv = split(next(command for command in step["commands"] if "tests/diffusion/models/" in split(command)))
+
+    assert step["grade"] == "Blocking"
+    assert step["agent_pool"] == "mi300_1"
+    assert argv[:4] == ["timeout", "15m", "pytest", "-sv"]
+    assert f"--ignore={JOY_GPU_PATH}" in argv
+    assert "--ignore=tests/diffusion/models/auk/test_auk_vae_fastpath.py" in argv
+    assert "--ignore=tests/diffusion/models/mammoth_moda2/test_dit_attention_cuda.py" in argv
+    assert argv[argv.index("-m") + 1] == (
+        "core_model and cuda and not (cards_2 or cards_3 or cards_4 or cards_5 or cards_6 or cards_7 or cards_8)"
+    )
+    assert argv[argv.index("--run-level") + 1] == "core_model"
 
 
 def test_joy_gpu_helper_import_does_not_require_pytest_package_mode() -> None:
