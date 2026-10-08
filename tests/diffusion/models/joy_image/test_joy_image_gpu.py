@@ -155,4 +155,22 @@ def test_joy_attention_platform_default_matches_torch_sdpa(with_padding_mask):
     )
     assert not torch.is_grad_enabled()
     assert all(not output.requires_grad for output in actual)
-    joy_units._assert_attention_outputs_close(actual, expected, dtype=dtype)
+    if attention_mask is None:
+        joy_units._assert_attention_outputs_close(actual, expected, dtype=dtype)
+        return
+
+    # Self-attention FlashAttention unpads queries as well as keys. SDPA
+    # computes padded query rows, but JoyImage never consumes those rows:
+    # all image tokens and only the unmasked text tokens are meaningful.
+    valid_text = attention_mask[:, hidden_states.shape[1] :]
+    valid_actual = (actual[0], actual[1][valid_text])
+    valid_expected = (expected[0], expected[1][valid_text])
+    joy_units._assert_attention_outputs_close(valid_actual, valid_expected, dtype=dtype)
+
+    # Ignoring padded outputs must not hide a dropped/incorrect key mask.
+    # Changing padded text must leave every image and valid text output intact.
+    changed_text = encoder_hidden_states.clone()
+    changed_text[~valid_text] = 10 * torch.randn_like(changed_text[~valid_text])
+    changed_actual = attention(hidden_states, changed_text, attention_mask=attention_mask)
+    valid_changed = (changed_actual[0], changed_actual[1][valid_text])
+    joy_units._assert_attention_outputs_close(valid_changed, valid_actual, dtype=dtype)
