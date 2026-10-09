@@ -36,6 +36,7 @@ from tests.model_executor.models.registry import (
 )
 from vllm_omni.config import OmniModelConfig
 from vllm_omni.model_executor.models.registry import OmniModelRegistry
+from vllm_omni.platforms import current_omni_platform
 from vllm_omni.transformers_utils.repo_utils import hf_api
 
 
@@ -118,7 +119,9 @@ def clear_processor_snapshot_cache():
 
 def _build_model_config(model_arch: str, info: _OmniExamplesInfo) -> OmniModelConfig:
     """Create an ``OmniModelConfig`` suitable for processor testing."""
-    model_path = _resolve_processor_snapshot(info.default)
+    # Only ROCm CI needs metadata prefetch. Keep the original Hub-ID path on
+    # other platforms so their processor lookup behavior remains covered.
+    model_path = _resolve_processor_snapshot(info.default) if current_omni_platform.is_rocm() else info.default
     kwargs: dict = dict(
         model=model_path,
         tokenizer=model_path,
@@ -356,6 +359,7 @@ def test_processor_snapshot_is_reused_with_fresh_model_configs(
     mocker,
     clear_processor_snapshot_cache,
 ):
+    mocker.patch.object(current_omni_platform, "is_rocm", return_value=True)
     info = next(iter(_MULTIMODAL_OMNI_EXAMPLE_MODELS.values()))
     snapshot_download = mocker.patch.object(
         hf_api(),
@@ -384,6 +388,38 @@ def test_processor_snapshot_is_reused_with_fresh_model_configs(
 
     first.multimodal_config.mm_processor_cache_gb = 1
     assert second.multimodal_config.mm_processor_cache_gb == 2048
+
+
+@pytest.mark.core_model
+@pytest.mark.omni
+@pytest.mark.cpu
+@pytest.mark.parametrize("model_arch", _get_model_archs_to_test())
+def test_non_rocm_processor_config_keeps_original_hub_ids(mocker, model_arch):
+    mocker.patch.object(current_omni_platform, "is_rocm", return_value=False)
+    snapshot_download = mocker.patch.object(hf_api(), "snapshot_download")
+    config = mocker.Mock(spec=OmniModelConfig)
+    config.multimodal_config = MultiModalConfig(mm_processor_cache_gb=0)
+    model_config_cls = mocker.patch(f"{__name__}.OmniModelConfig", return_value=config)
+    info = _MULTIMODAL_OMNI_EXAMPLE_MODELS[model_arch]
+
+    assert _build_model_config(model_arch, info) is config
+
+    snapshot_download.assert_not_called()
+    expected_kwargs = dict(
+        model=info.default,
+        tokenizer=info.default,
+        tokenizer_mode="auto",
+        trust_remote_code=info.trust_remote_code,
+        model_arch=model_arch,
+        model_stage=info.model_stage,
+        max_model_len=info.max_model_len,
+        enforce_eager=True,
+        dtype="auto",
+    )
+    if info.hf_config_name is not None:
+        expected_kwargs["hf_config_name"] = info.hf_config_name
+    model_config_cls.assert_called_once_with(**expected_kwargs)
+    assert config.multimodal_config.mm_processor_cache_gb == 2048
 
 
 @pytest.mark.core_model
