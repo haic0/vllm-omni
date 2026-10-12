@@ -508,7 +508,7 @@ def test_diffusion_slow_cpu_cases_have_one_blocking_owner(pipeline_path: Path) -
     assert step["grade"] == "Blocking"
     assert step["timeout_in_minutes"] == 40
     assert step["artifact_paths"] == [DIFFUSION_SLOW_CPU_ARTIFACTS]
-    assert "retry" not in step
+    assert step["retry"] == {"automatic": [{"exit_status": 134, "limit": 1}]}
     assert "export VLLM_ROCM_USE_AITER=0" in step["commands"]
     assert (
         'export DIFFUSION_SLOW_CPU_ARTIFACT_DIR="$$BUILDKITE_BUILD_CHECKOUT_PATH/artifacts/amd-diffusion-slow-cpu"'

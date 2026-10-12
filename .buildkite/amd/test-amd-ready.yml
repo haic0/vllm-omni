@@ -92,6 +92,13 @@ steps:
       timeout_in_minutes: 40
       artifact_paths:
         - "artifacts/amd-diffusion-slow-cpu/pytest.xml"
+      # Same exit-134 retry as the five-way shards. Buildkite cannot prove
+      # every 134 is a GPU hang. Assertions (1), timeouts (124), and OOMs
+      # (137) remain non-retryable.
+      retry:
+        automatic:
+          - exit_status: 134
+            limit: 1
       commands:
         - export VLLM_ROCM_USE_AITER=0
         - export DIFFUSION_SLOW_CPU_ARTIFACT_DIR="$$BUILDKITE_BUILD_CHECKOUT_PATH/artifacts/amd-diffusion-slow-cpu"
