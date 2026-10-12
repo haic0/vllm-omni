@@ -543,13 +543,27 @@ STABLE_AUDIO_LAYERWISE_NODE = (
 )
 
 
+def _assert_publish_follows_successful_pytest(command: str, pytest_marker: str) -> None:
+    then_at = command.index("; then\n")
+    else_at = command.index("\nelse\n")
+    publish_at = command.index(AITER_MHA_CACHE_PUBLISH)
+
+    assert command.startswith("if ")
+    assert pytest_marker in command[:then_at]
+    assert then_at < publish_at < else_at
+    assert "pytest_status=$$?" in command[else_at:]
+    assert 'exit "$${pytest_status}"' in command[else_at:]
+    assert "&&" not in command
+
+
 def _assert_immutable_aiter_mha_cache(step: dict, pytest_marker: str) -> None:
     commands = step["commands"]
     prepare_at = commands.index(AITER_MHA_CACHE_PREPARE)
-    publish_at = commands.index(AITER_MHA_CACHE_PUBLISH)
     pytest_at = next(index for index, command in enumerate(commands) if pytest_marker in command)
 
-    assert prepare_at < pytest_at < publish_at
+    assert prepare_at < pytest_at
+    assert not any(command.strip() == AITER_MHA_CACHE_PUBLISH for command in commands)
+    _assert_publish_follows_successful_pytest(commands[pytest_at], pytest_marker)
     assert "AITER_JIT_DIR=" not in "\n".join(commands)
     assert "HF_HOME" not in "\n".join(commands)
     assert "GPU_ARCHS=" not in "\n".join(commands)
@@ -559,8 +573,9 @@ def _assert_immutable_aiter_mha_cache(step: dict, pytest_marker: str) -> None:
 def test_z_image_merge_timeout_covers_cold_aiter_compile() -> None:
     step = _find_step("Diffusion Model Test")
     pytest_command = next(command for command in step["commands"] if "test_z_image.py" in command)
+    condition = pytest_command.split("; then", 1)[0]
 
-    assert split(pytest_command)[:2] == ["timeout", "55m"]
+    assert split(condition)[1:3] == ["timeout", "55m"]
     _assert_immutable_aiter_mha_cache(step, "tests/e2e/offline_inference/test_z_image.py")
 
 
