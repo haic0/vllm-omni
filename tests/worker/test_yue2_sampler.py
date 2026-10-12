@@ -31,6 +31,12 @@ from vllm_omni.model_executor.models.yue2.yue2 import (
 
 pytestmark = [pytest.mark.core_model, pytest.mark.cpu]
 
+# Each step draws from the full 184704-word vocabulary on CPU. Production
+# min_tokens is 32 for ABC and 200 for semantic; the block is a history-length
+# compare, so cross a short floor instead of repeating that count.
+_AGREEMENT_STEPS = 4
+_EXERCISED_MIN_TOKENS = 2
+
 
 def _reference_scores(logits: torch.Tensor, preset: dict, history: list[int], phase: str) -> torch.Tensor:
     """Upstream per-row scores over the full vocabulary (float32)."""
@@ -107,6 +113,9 @@ def test_batched_draws_match_per_row_multinomial(phase, rows, min_tokens, temper
     preset = dict(ABC_SAMPLING if phase == "abc" else SEMANTIC_SAMPLING)
     if min_tokens is not None:
         preset["min_tokens"] = min_tokens
+    else:
+        assert preset["min_tokens"] > _EXERCISED_MIN_TOKENS
+        preset["min_tokens"] = _EXERCISED_MIN_TOKENS
     if temperature is not None:
         preset["temperature"] = temperature
     end = ABC_END if phase == "abc" else MUSIC_END
@@ -114,7 +123,9 @@ def test_batched_draws_match_per_row_multinomial(phase, rows, min_tokens, temper
     batched = [torch.Generator().manual_seed(1000 + row) for row in range(rows)]
     histories: list[list[int]] = [[] for _ in range(rows)]
     logits_generator = torch.Generator().manual_seed(7)
-    for _ in range(40):
+    end_blocked: list[bool] = []
+    for _ in range(_AGREEMENT_STEPS):
+        end_blocked.append(any(len(histories[row]) < preset["min_tokens"] for row in range(rows)))
         logits = (torch.randn((rows, VOCAB_SIZE), generator=logits_generator) * 3).to(torch.bfloat16)
         # Peaky over a few ids, like a real LM, so the penalty and top-p matter.
         if phase == "semantic":
@@ -136,6 +147,9 @@ def test_batched_draws_match_per_row_multinomial(phase, rows, min_tokens, temper
                 assert torch.equal(reference[row].get_state(), batched[row].get_state())
             if expected[row] != end:
                 histories[row].append(expected[row])
+    if preset["min_tokens"] > 0:
+        assert end_blocked[0]
+        assert not end_blocked[-1]
 
 
 def test_a_row_draws_the_same_alone_or_in_a_batch() -> None:
