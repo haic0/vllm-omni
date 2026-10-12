@@ -535,11 +535,45 @@ def test_diffusion_slow_cpu_cases_stay_off_nightly() -> None:
     assert DIFFUSION_SLOW_CPU_LABEL not in labels
 
 
+AITER_MHA_CACHE_PREPARE = 'eval "$$(python .buildkite/amd/scripts/aiter_mha_cache.py prepare)"'
+AITER_MHA_CACHE_PUBLISH = "python .buildkite/amd/scripts/aiter_mha_cache.py publish"
+STABLE_AUDIO_LAYERWISE_NODE = (
+    "tests/diffusion/offloader/test_diffusion_layerwise_offload.py"
+    "::test_layerwise_offload_diffusion_model[stabilityai/stable-audio-open-1.0]"
+)
+
+
+def _assert_immutable_aiter_mha_cache(step: dict, pytest_marker: str) -> None:
+    commands = step["commands"]
+    prepare_at = commands.index(AITER_MHA_CACHE_PREPARE)
+    publish_at = commands.index(AITER_MHA_CACHE_PUBLISH)
+    pytest_at = next(index for index, command in enumerate(commands) if pytest_marker in command)
+
+    assert prepare_at < pytest_at < publish_at
+    assert "AITER_JIT_DIR=" not in "\n".join(commands)
+    assert "HF_HOME" not in "\n".join(commands)
+    assert "GPU_ARCHS=" not in "\n".join(commands)
+    assert all("DIFFUSION_ATTENTION_BACKEND" not in command for command in commands)
+
+
 def test_z_image_merge_timeout_covers_cold_aiter_compile() -> None:
     step = _find_step("Diffusion Model Test")
     pytest_command = next(command for command in step["commands"] if "test_z_image.py" in command)
 
     assert split(pytest_command)[:2] == ["timeout", "55m"]
+    _assert_immutable_aiter_mha_cache(step, "tests/e2e/offline_inference/test_z_image.py")
+
+
+def test_stable_audio_layerwise_reuses_the_bf16_aiter_module_cache() -> None:
+    step = _find_step("Diffusion Stable Audio Layerwise Offload Test (quarantined)")
+
+    assert step["grade"] == "NonBlocking"
+    assert step["agent_pool"] == "mi300_1"
+    _assert_immutable_aiter_mha_cache(step, STABLE_AUDIO_LAYERWISE_NODE)
+
+    blocking = _find_step("Diffusion Model CPU offloading Test")
+    assert "export DIFFUSION_ATTENTION_BACKEND=TORCH_SDPA" in blocking["commands"]
+    assert AITER_MHA_CACHE_PREPARE not in blocking["commands"]
 
 
 def test_cosyvoice_ready_smoke_uses_sdpa() -> None:
