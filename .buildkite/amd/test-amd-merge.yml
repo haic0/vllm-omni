@@ -203,10 +203,11 @@ steps:
         - export VLLM_LOGGING_LEVEL=DEBUG
         - export VLLM_WORKER_MULTIPROC_METHOD=spawn
         # Restore the unmasked BF16 AITER MHA module into a job-local directory.
-        # The shared copy is immutable and is never the AITER_JIT_DIR.
+        # The shared copy is never the AITER_JIT_DIR.
         - eval "$$(python .buildkite/amd/scripts/aiter_mha_cache.py prepare)"
         # The runner continues after a failed command. Publish only when
-        # pytest returns 0, and preserve that status otherwise.
+        # pytest returns 0, and exit with that status otherwise. publish()
+        # records the module only for a non-PR main build.
         - |
           if pytest -s -v \
             'tests/diffusion/offloader/test_diffusion_layerwise_offload.py::test_layerwise_offload_diffusion_model[stabilityai/stable-audio-open-1.0]'; then
@@ -263,7 +264,8 @@ steps:
         # A verified cache hit restores that module before pytest starts.
         - eval "$$(python .buildkite/amd/scripts/aiter_mha_cache.py prepare)"
         # The runner continues after a failed command. Publish only when
-        # pytest returns 0, and preserve that status otherwise.
+        # pytest returns 0, and exit with that status otherwise. publish()
+        # records the module only for a non-PR main build.
         - |
           if timeout 55m pytest -s -v tests/e2e/offline_inference/test_z_image.py; then
             python .buildkite/amd/scripts/aiter_mha_cache.py publish
