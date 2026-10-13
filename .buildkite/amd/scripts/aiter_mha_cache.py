@@ -678,6 +678,7 @@ def download_from_source(
     *,
     runner: Callable[..., subprocess.CompletedProcess[str]] = subprocess.run,
     current_checkout: str | None = None,
+    ldd_ok: Callable[[Path], bool] = ldd_resolves,
 ) -> bool:
     prefix = artifact_prefix(identity)
     with tempfile.TemporaryDirectory(prefix="vllm-omni-aiter-download-") as temporary:
@@ -704,7 +705,7 @@ def download_from_source(
         if completed.returncode != 0:
             return False
         published = root / prefix
-        if not publication_matches(published, identity):
+        if not publication_matches(published, identity, ldd_ok=ldd_ok):
             return False
         if not provenance_matches_source(
             published,

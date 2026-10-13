@@ -335,6 +335,7 @@ def test_download_restores_only_the_verified_build_artifact(tmp_path: Path) -> N
         _env(),
         runner=runner,
         current_checkout=CHECKOUT,
+        ldd_ok=lambda _path: True,
     )
     assert (restored / cache.module_filename()).read_bytes().startswith(b"compiled-module")
 
