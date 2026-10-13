@@ -1,12 +1,13 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM-Omni project
 
-"""Behavior tests for the immutable BF16 AITER MHA cache."""
+"""Behavior tests for the build-scoped BF16 AITER MHA artifact."""
 
 from __future__ import annotations
 
 import importlib.util
-import os
+import json
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -16,12 +17,16 @@ import pytest
 pytestmark = [pytest.mark.core_model, pytest.mark.cpu]
 
 _SCRIPT = Path(".buildkite/amd/scripts/aiter_mha_cache.py")
+HEAD = "1" * 40
+BASE = "2" * 40
+CHECKOUT = "3" * 40
 
 
 def _load_cache():
     spec = importlib.util.spec_from_file_location("aiter_mha_cache", _SCRIPT)
     assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
     spec.loader.exec_module(module)
     return module
 
@@ -41,9 +46,46 @@ def _identity() -> dict[str, str]:
     return identity
 
 
-def _store(root: Path, identity: dict[str, str] | None = None) -> Path:
-    identity = _identity() if identity is None else identity
-    return root / cache.TRUST_NAMESPACE / cache.cache_key(identity)
+def _env(**updates: str) -> dict[str, str]:
+    values = {
+        "BUILDKITE_BUILD_ID": "build-pr-8848",
+        "BUILDKITE_BUILD_NUMBER": "14000",
+        "BUILDKITE_JOB_ID": "job-z-image",
+        "BUILDKITE_COMMIT": HEAD,
+        "BUILDKITE_BRANCH": "haic0:ci/amd-aiter-mha-cache",
+        "BUILDKITE_PULL_REQUEST": "8848",
+        "BUILDKITE_REPO": "https://github.com/vllm-project/vllm-omni.git",
+        "VLLM_OMNI_AITER_MHA_TRUSTED_COMMIT": BASE,
+    }
+    values.update(updates)
+    return values
+
+
+def _provenance(identity: dict[str, str], **updates: str) -> dict[str, str]:
+    value = cache.provenance_from_env(identity, _env(**updates), checkout=CHECKOUT)
+    assert value is not None
+    return value
+
+
+def _details(
+    *,
+    build_id: str = "build-pr-8848",
+    number: int = 14000,
+    commit: str = HEAD,
+    branch: str = "haic0:ci/amd-aiter-mha-cache",
+    pull_request: str = "8848",
+) -> dict:
+    return {
+        "id": build_id,
+        "number": number,
+        "commit_id": commit,
+        "branch_name": branch,
+        "pull_request": {"id": pull_request} if pull_request else None,
+        "project": {
+            "slug": cache.BUILDKITE_PIPELINE_SLUG,
+            "provider": {"url": "https://github.com/vllm-project/vllm-omni"},
+        },
+    }
 
 
 def test_cache_key_changes_when_the_runtime_identity_changes() -> None:
@@ -80,148 +122,237 @@ def test_image_dependency_identity_tracks_the_rocm_image_inputs(tmp_path: Path) 
     assert cache.dependency_identity(root) != original
 
 
-def test_publish_is_immutable_and_restore_verifies_the_copy(tmp_path: Path) -> None:
+def test_stage_and_restore_verify_module_identity_and_provenance(tmp_path: Path) -> None:
     identity = _identity()
-    store = _store(tmp_path, identity)
-    first_job = tmp_path / "job-a"
-    second_job = tmp_path / "job-b"
+    job_dir = tmp_path / "job"
     restore_dir = tmp_path / "restore"
-    for path in (first_job, second_job, restore_dir):
-        path.mkdir()
-    _write_module(first_job / cache.module_filename(), b"first-build")
-    _write_module(second_job / cache.module_filename(), b"second-build")
+    job_dir.mkdir()
+    restore_dir.mkdir()
+    _write_module(job_dir / cache.module_filename(), b"compiled-module")
 
-    assert cache.publish_module(first_job, store, "job-a", identity) == "published"
-    published = cache.published_dir(store) / cache.module_filename()
-    first_bytes = published.read_bytes()
-    assert cache.publish_module(second_job, store, "job-b", identity) == "present"
-    assert published.read_bytes() == first_bytes
-    assert cache.publication_matches(cache.published_dir(store), identity, ldd_ok=lambda _path: True)
+    published = cache.stage_publication(job_dir, tmp_path / "stage", identity, _provenance(identity))
+    assert published is not None
+    assert cache.publication_matches(published, identity, ldd_ok=lambda _path: True)
 
-    assert cache.restore_module(cache.published_dir(store), restore_dir)
-    assert (restore_dir / cache.module_filename()).read_bytes() == first_bytes
+    source = cache.BuildSource(
+        "build-pr-8848",
+        14000,
+        HEAD,
+        "haic0:ci/amd-aiter-mha-cache",
+        "8848",
+        True,
+    )
+    assert cache.provenance_matches_source(
+        published,
+        source,
+        identity,
+        _env(),
+        current_checkout=CHECKOUT,
+    )
+    assert cache.restore_module(published, restore_dir)
+    assert (restore_dir / cache.module_filename()).read_bytes().startswith(b"compiled-module")
 
-    published.chmod(0o644)
-    published.write_bytes(first_bytes + b"tampered")
+    module = published / cache.module_filename()
+    module.write_bytes(module.read_bytes() + b"tampered")
     rejected = tmp_path / "rejected"
     rejected.mkdir()
-    assert not cache.restore_module(cache.published_dir(store), rejected)
+    assert not cache.restore_module(published, rejected)
     assert not (rejected / cache.module_filename()).exists()
-    assert list(rejected.glob(".*.partial")) == []
 
 
-def test_invalid_module_is_not_published(tmp_path: Path) -> None:
+def test_invalid_module_is_not_staged(tmp_path: Path) -> None:
     identity = _identity()
-    store = _store(tmp_path, identity)
     job_dir = tmp_path / "job"
     job_dir.mkdir()
     (job_dir / cache.module_filename()).write_bytes(b"host-only-object")
 
-    assert cache.publish_module(job_dir, store, "job", identity) == "skipped"
-    assert not cache.published_dir(store).exists()
+    assert cache.stage_publication(job_dir, tmp_path / "stage", identity, _provenance(identity)) is None
 
 
-def test_corrupt_publication_is_not_replaced(tmp_path: Path) -> None:
+def test_same_pr_artifact_cannot_cross_head_base_or_pr_identity(tmp_path: Path) -> None:
     identity = _identity()
-    store = _store(tmp_path, identity)
-    published = cache.published_dir(store)
-    published.mkdir(parents=True)
-    module = published / cache.module_filename()
-    _write_module(module, b"corrupt")
-    (published / "module.sha256").write_text("0" * 64 + "\n", encoding="utf-8")
-    (published / "READY").write_text("ok\n", encoding="utf-8")
-    original = module.read_bytes()
-
     job_dir = tmp_path / "job"
     job_dir.mkdir()
-    _write_module(job_dir / cache.module_filename(), b"replacement")
+    _write_module(job_dir / cache.module_filename(), b"compiled-module")
+    published = cache.stage_publication(job_dir, tmp_path / "stage", identity, _provenance(identity))
+    assert published is not None
+    source = cache.BuildSource(
+        "build-pr-8848",
+        14000,
+        HEAD,
+        "haic0:ci/amd-aiter-mha-cache",
+        "8848",
+        True,
+    )
 
-    assert cache.publish_module(job_dir, store, "job", identity) == "skipped"
-    assert module.read_bytes() == original
-
-
-def test_main_publish_replaces_a_module_that_fails_the_runtime_check(tmp_path: Path) -> None:
-    identity = _identity()
-    store = _store(tmp_path, identity)
-    job_dir = tmp_path / "job"
-    job_dir.mkdir()
-    module = job_dir / cache.module_filename()
-    _write_module(module, b"first-build")
-    assert cache.publish_module(job_dir, store, "job-a", identity) == "published"
-    assert not cache.publication_matches(
-        cache.published_dir(store),
+    assert not cache.provenance_matches_source(
+        published,
+        source,
         identity,
-        ldd_ok=lambda _path: False,
+        _env(BUILDKITE_COMMIT="4" * 40),
+        current_checkout=CHECKOUT,
+    )
+    assert not cache.provenance_matches_source(
+        published,
+        source,
+        identity,
+        _env(BUILDKITE_PULL_REQUEST="8849"),
+        current_checkout=CHECKOUT,
+    )
+    assert not cache.provenance_matches_source(
+        published,
+        source,
+        identity,
+        _env(VLLM_OMNI_AITER_MHA_TRUSTED_COMMIT="5" * 40),
+        current_checkout=CHECKOUT,
+    )
+    assert not cache.provenance_matches_source(
+        published,
+        source,
+        identity,
+        _env(),
+        current_checkout="6" * 40,
     )
 
-    _write_module(module, b"rebuilt")
-    assert (
-        cache.publish_module(
-            job_dir,
-            store,
-            "job-b",
-            identity,
-            replace_incompatible=False,
-            accept=lambda _path: False,
-        )
-        == "skipped"
-    )
-    assert (
-        cache.publish_module(
-            job_dir,
-            store,
-            "job-c",
-            identity,
-            replace_incompatible=True,
-            accept=lambda _path: False,
-        )
-        == "published"
-    )
-    restored = cache.published_dir(store) / cache.module_filename()
-    assert restored.read_bytes().startswith(b"rebuilt")
 
-
-def test_trusted_main_producer_rejects_pull_requests_and_forks() -> None:
-    trusted = {
-        "BUILDKITE_BRANCH": "main",
-        "BUILDKITE_PULL_REQUEST": "false",
-        "BUILDKITE_REPO": "https://github.com/vllm-project/vllm-omni.git",
-    }
-
-    assert cache.is_trusted_main_producer(trusted)
-    assert not cache.is_trusted_main_producer({**trusted, "BUILDKITE_PULL_REQUEST": "8848"})
-    assert not cache.is_trusted_main_producer({**trusted, "BUILDKITE_BRANCH": "feature"})
-    assert not cache.is_trusted_main_producer({**trusted, "BUILDKITE_REPO": "https://github.com/example/vllm-omni.git"})
-
-
-def test_pull_request_publish_does_not_write_the_shared_cache(tmp_path: Path) -> None:
+def test_main_artifact_requires_the_exact_trusted_commit(tmp_path: Path) -> None:
+    identity = _identity()
     job_dir = tmp_path / "job"
     job_dir.mkdir()
-    _write_module(job_dir / cache.module_filename(), b"from-pr")
-    store = _store(tmp_path)
-    env = os.environ.copy()
-    env.update(
-        {
-            "BUILDKITE_BRANCH": "feature",
-            "BUILDKITE_PULL_REQUEST": "8848",
-            "BUILDKITE_REPO": "https://github.com/vllm-project/vllm-omni.git",
-            "BUILDKITE_JOB_ID": "pr-job",
-            "HF_HOME": str(tmp_path),
-            "VLLM_OMNI_AITER_MHA_JOB_DIR": str(job_dir),
-            "VLLM_OMNI_AITER_MHA_STORE": str(store),
-        }
+    _write_module(job_dir / cache.module_filename(), b"main-module")
+    main_env = _env(
+        BUILDKITE_BUILD_ID="build-main",
+        BUILDKITE_BUILD_NUMBER="13999",
+        BUILDKITE_COMMIT=BASE,
+        BUILDKITE_BRANCH="main",
+        BUILDKITE_PULL_REQUEST="false",
+        VLLM_OMNI_AITER_MHA_TRUSTED_COMMIT="7" * 40,
     )
-    completed = subprocess.run(
-        [sys.executable, str(_SCRIPT), "publish"],
-        check=False,
-        capture_output=True,
-        text=True,
-        env=env,
+    provenance = cache.provenance_from_env(identity, main_env, checkout=BASE)
+    assert provenance is not None
+    published = cache.stage_publication(job_dir, tmp_path / "stage", identity, provenance)
+    assert published is not None
+    source = cache.BuildSource("build-main", 13999, BASE, "main", "", False)
+
+    assert cache.provenance_matches_source(published, source, identity, _env())
+    assert not cache.provenance_matches_source(
+        published,
+        source,
+        identity,
+        _env(VLLM_OMNI_AITER_MHA_TRUSTED_COMMIT="8" * 40),
     )
 
-    assert completed.returncode == 0
-    assert "non-PR main" in completed.stderr
-    assert not cache.published_dir(store).exists()
+
+def test_discovery_uses_server_metadata_and_excludes_the_current_build() -> None:
+    listing = (
+        '<a href="/vllm/vllm-omni-amd-ci/builds/14001">current</a>'
+        '<a href="/vllm/vllm-omni-amd-ci/builds/14000">previous</a>'
+    )
+
+    def fetch(url: str) -> str:
+        if "?" in url:
+            return listing
+        if url.endswith("/14001.json"):
+            return json.dumps(_details(build_id="current", number=14001))
+        if url.endswith("/14000.json"):
+            return json.dumps(_details())
+        raise AssertionError(url)
+
+    sources = cache.discover_build_sources(
+        branch="haic0:ci/amd-aiter-mha-cache",
+        commit=HEAD,
+        pull_request="8848",
+        current_build_id="current",
+        exact_checkout=True,
+        fetch=fetch,
+    )
+
+    assert sources == [
+        cache.BuildSource(
+            "build-pr-8848",
+            14000,
+            HEAD,
+            "haic0:ci/amd-aiter-mha-cache",
+            "8848",
+            True,
+        )
+    ]
+
+
+def test_discovery_rejects_forged_branch_pr_and_provider_metadata() -> None:
+    listing = "".join(f'<a href="/vllm/vllm-omni-amd-ci/builds/{number}">build</a>' for number in (1, 2, 3))
+    details = {
+        1: _details(number=1, branch="main"),
+        2: _details(number=2, pull_request="9999"),
+        3: _details(number=3),
+    }
+    details[3]["project"]["provider"]["url"] = "https://github.com/example/vllm-omni"
+
+    def fetch(url: str) -> str:
+        if "?" in url:
+            return listing
+        number = int(url.removesuffix(".json").rsplit("/", 1)[-1])
+        return json.dumps(details[number])
+
+    assert not cache.discover_build_sources(
+        branch="haic0:ci/amd-aiter-mha-cache",
+        commit=HEAD,
+        pull_request="8848",
+        current_build_id="current",
+        exact_checkout=True,
+        fetch=fetch,
+    )
+
+
+def test_download_restores_only_the_verified_build_artifact(tmp_path: Path) -> None:
+    identity = _identity()
+    compiled = tmp_path / "compiled"
+    compiled.mkdir()
+    _write_module(compiled / cache.module_filename(), b"compiled-module")
+    source_root = tmp_path / "source"
+    assert cache.stage_publication(compiled, source_root, identity, _provenance(identity)) is not None
+
+    def runner(command: list[str], **_kwargs) -> subprocess.CompletedProcess[str]:
+        destination = Path(command[4])
+        shutil.copytree(source_root / cache.CACHE_DIRNAME, destination / cache.CACHE_DIRNAME)
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+    source = cache.BuildSource(
+        "build-pr-8848",
+        14000,
+        HEAD,
+        "haic0:ci/amd-aiter-mha-cache",
+        "8848",
+        True,
+    )
+    restored = tmp_path / "restored"
+    restored.mkdir()
+
+    assert cache.download_from_source(
+        source,
+        restored,
+        identity,
+        _env(),
+        runner=runner,
+        current_checkout=CHECKOUT,
+    )
+    assert (restored / cache.module_filename()).read_bytes().startswith(b"compiled-module")
+
+
+def test_upload_targets_only_the_current_build_scoped_artifact(tmp_path: Path) -> None:
+    calls: list[tuple[list[str], Path]] = []
+
+    def runner(command: list[str], **kwargs) -> subprocess.CompletedProcess[str]:
+        calls.append((command, kwargs["cwd"]))
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+    assert cache.upload_publication(tmp_path, _identity(), runner=runner)
+    command, cwd = calls[0]
+    assert command[:3] == ["buildkite-agent", "artifact", "upload"]
+    assert command[3] == f"{cache.artifact_prefix(_identity()).as_posix()}/*"
+    assert "--job" not in command
+    assert "--build" not in command
+    assert cwd == tmp_path
 
 
 def test_seed_skips_the_cached_mha_module(tmp_path: Path) -> None:
@@ -238,20 +369,15 @@ def test_seed_skips_the_cached_mha_module(tmp_path: Path) -> None:
     assert not (job_dir / cache.module_filename()).exists()
 
 
-def test_prepare_exports_a_job_local_directory_without_a_shared_store() -> None:
-    env = os.environ.copy()
-    env["HF_HOME"] = ""
-    env["BUILDKITE_JOB_ID"] = "unit.job/1"
-    completed = subprocess.run(
-        [sys.executable, str(_SCRIPT), "prepare"],
-        check=False,
-        capture_output=True,
-        text=True,
-        env=env,
-    )
+def test_prepare_exports_only_a_job_local_directory(monkeypatch, capsys) -> None:
+    monkeypatch.setenv("BUILDKITE_JOB_ID", "unit.job/1")
+    monkeypatch.setattr(cache, "installed_jit_dir", lambda: None)
+    monkeypatch.setattr(cache, "collect_identity", lambda: None)
 
-    assert completed.returncode == 0
-    assert "export AITER_JIT_DIR=/tmp/vllm-omni-aiter-mha-unit.job_1\n" in completed.stdout
-    assert "export GPU_ARCHS=gfx942\n" in completed.stdout
-    assert "unset VLLM_OMNI_AITER_MHA_STORE\n" in completed.stdout
-    assert cache.CACHE_DIRNAME not in completed.stdout
+    assert cache.prepare() == 0
+    captured = capsys.readouterr()
+    assert "export AITER_JIT_DIR=/tmp/vllm-omni-aiter-mha-unit.job_1\n" in captured.out
+    assert "export GPU_ARCHS=gfx942\n" in captured.out
+    assert "VLLM_OMNI_AITER_MHA_JOB_DIR" in captured.out
+    assert "HF_HOME" not in captured.out
+    assert "STORE" not in captured.out

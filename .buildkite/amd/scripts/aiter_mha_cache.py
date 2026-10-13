@@ -6,17 +6,20 @@
 
 Z-Image and the quarantined Stable Audio layerwise job both cold-compile
 ``mha_fwd_bf16_nbias_nmask_nlse_ndropout_nqscale``. AITER loads an existing
-``.so`` from ``AITER_JIT_DIR`` instead of compiling it. This script keeps that
-module in a directory keyed by the Python, pybind, compiler, libstdc++, image
-dependency, AITER core, Torch, and ROCm identity. Each job receives its own
-writable copy.
+``.so`` from ``AITER_JIT_DIR`` instead of compiling it. This script stores that
+module as a Buildkite artifact keyed by the Python, pybind, compiler,
+libstdc++, image dependency, AITER core, Torch, and ROCm identity.
 
-Only a non-PR main build of ``vllm-project/vllm-omni`` may publish. Pull
-requests may restore that publication and cannot replace it. The shared
-directory is never ``AITER_JIT_DIR``: AITER deletes a module at the start of a
-rebuild. Readers accept a publication only when its checksum, ``gfx942`` device
-code, trust namespace, and ABI identity all match. A main build may replace a
-publication that fails those checks after pytest has succeeded.
+The artifact service, rather than a PR-writable shared filesystem, owns the
+cross-build provenance boundary. A consumer accepts artifacts only from:
+
+* an earlier build of the same PR, head commit, merge base, and checkout; or
+* a Buildkite build whose server metadata names the exact trusted upstream
+  ``main`` commit supplied by the bootstrap.
+
+Every consumer receives a writable job-local copy. Checksums, ``gfx942``
+device code, runtime ABI identity, Buildkite source metadata, and the recorded
+producer provenance are verified before the module is restored.
 """
 
 from __future__ import annotations
@@ -24,6 +27,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import importlib.metadata
+import json
 import os
 import platform
 import re
@@ -32,16 +36,23 @@ import shutil
 import subprocess
 import sys
 import sysconfig
+import tempfile
+import urllib.error
+import urllib.parse
+import urllib.request
 from collections.abc import Callable, Mapping
+from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 MODULE_NAME = "mha_fwd_bf16_nbias_nmask_nlse_ndropout_nqscale"
 ARCH = "gfx942"
 ARCH_MARKER = b"amdhsa--gfx942"
-CACHE_DIRNAME = "vllm-omni-aiter-jit"
-SCHEMA = "2"
-TRUST_NAMESPACE = "main"
+CACHE_DIRNAME = "vllm-omni-aiter-mha-artifact"
+SCHEMA = "3"
 TRUSTED_REPOSITORY = "vllm-project/vllm-omni"
+BUILDKITE_PIPELINE_URL = "https://buildkite.com/vllm/vllm-omni-amd-ci"
+BUILDKITE_PIPELINE_SLUG = "vllm-omni-amd-ci"
 KEY_FIELDS = (
     "schema",
     "module",
@@ -58,6 +69,18 @@ KEY_FIELDS = (
     "image_deps",
     "core",
 )
+PROVENANCE_FIELDS = (
+    "build_id",
+    "build_number",
+    "job_id",
+    "commit",
+    "checkout_commit",
+    "branch",
+    "pull_request",
+    "trusted_commit",
+    "repository",
+    "cache_key",
+)
 _IMAGE_DEPENDENCY_PATHS = (
     "docker/Dockerfile.rocm",
     "docker/Dockerfile.rocm.dockerignore",
@@ -66,6 +89,18 @@ _IMAGE_DEPENDENCY_PATHS = (
     "tools/install_torchcodec_rocm.sh",
 )
 _READ_SIZE = 1024 * 1024
+_MAX_HTTP_BYTES = 2 * 1024 * 1024
+_SHA_PATTERN = re.compile(r"[0-9a-f]{40}")
+
+
+@dataclass(frozen=True)
+class BuildSource:
+    build_id: str
+    number: int
+    commit: str
+    branch: str
+    pull_request: str
+    exact_checkout: bool
 
 
 def log(message: str) -> None:
@@ -107,8 +142,8 @@ def cache_key(identity: Mapping[str, str]) -> str:
     return hashlib.sha256(payload.encode()).hexdigest()[:32]
 
 
-def published_dir(store: Path) -> Path:
-    return store / "published"
+def artifact_prefix(identity: Mapping[str, str]) -> Path:
+    return Path(CACHE_DIRNAME) / cache_key(identity) / "published"
 
 
 def _read_identity(path: Path) -> dict[str, str] | None:
@@ -125,16 +160,30 @@ def _read_identity(path: Path) -> dict[str, str] | None:
     return {field: identity[field] for field in KEY_FIELDS}
 
 
+def _read_provenance(path: Path) -> dict[str, str] | None:
+    if not path.is_file():
+        return None
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return None
+    if not isinstance(value, dict) or set(value) != set(PROVENANCE_FIELDS):
+        return None
+    if not all(isinstance(value[field], str) for field in PROVENANCE_FIELDS):
+        return None
+    return {field: value[field] for field in PROVENANCE_FIELDS}
+
+
 def is_valid_publication(published: Path) -> bool:
     module = published / module_filename()
     checksum_path = published / "module.sha256"
     ready = published / "READY"
-    trust = published / "TRUST"
     identity = _read_identity(published / "identity.txt")
-    if not (module.is_file() and checksum_path.is_file() and ready.is_file() and trust.is_file()):
+    provenance = _read_provenance(published / "provenance.json")
+    if not (module.is_file() and checksum_path.is_file() and ready.is_file()):
         return False
-    if trust.read_text(encoding="utf-8").strip() != TRUST_NAMESPACE:
-        log(f"ignoring cache outside the {TRUST_NAMESPACE} trust namespace: {published}")
+    if identity is None or provenance is None:
+        log(f"ignoring cache without complete identity and provenance: {published}")
         return False
     recorded = checksum_path.read_text(encoding="utf-8").strip()
     if recorded != sha256_file(module):
@@ -143,26 +192,24 @@ def is_valid_publication(published: Path) -> bool:
     if not contains_marker(module):
         log(f"ignoring cache without {ARCH} device code: {module}")
         return False
-    if identity is None:
-        log(f"ignoring cache without a complete ABI identity: {published}")
-        return False
     try:
         key = cache_key(identity)
     except ValueError as exc:
         log(str(exc))
         return False
-    if published.parent.name != key or published.parent.parent.name != TRUST_NAMESPACE:
-        log(f"ignoring cache whose directory does not match its ABI identity: {published}")
+    if (
+        published.name != "published"
+        or published.parent.name != key
+        or published.parent.parent.name != CACHE_DIRNAME
+        or provenance["cache_key"] != key
+    ):
+        log(f"ignoring cache whose artifact path does not match its ABI identity: {published}")
         return False
     return True
 
 
 def ldd_resolves(path: Path) -> bool:
-    """Return whether the dynamic loader can resolve ``path``.
-
-    A missing ``ldd`` does not reject the module. An unresolved dependency does,
-    so a module built for another libstdc++ or Python is not restored.
-    """
+    """Return whether the dynamic loader can resolve ``path``."""
     try:
         completed = subprocess.run(
             ["ldd", str(path)],
@@ -186,7 +233,6 @@ def publication_matches(
     *,
     ldd_ok: Callable[[Path], bool] = ldd_resolves,
 ) -> bool:
-    """Return whether ``published`` is the module for this exact runtime."""
     if not is_valid_publication(published):
         return False
     recorded = _read_identity(published / "identity.txt")
@@ -196,46 +242,9 @@ def publication_matches(
     return ldd_ok(published / module_filename())
 
 
-def is_trusted_main_producer(env: Mapping[str, str] | None = None) -> bool:
-    """Return whether this process may publish the shared main cache.
-
-    Pull-request jobs restore that cache and do not update it. The repository
-    check keeps another checkout that shares the Hugging Face volume from
-    becoming the writer.
-    """
-    values = os.environ if env is None else env
-    pull_request = values.get("BUILDKITE_PULL_REQUEST", "")
-    repository = values.get("BUILDKITE_REPO", "")
-    return (
-        values.get("BUILDKITE_BRANCH") == TRUST_NAMESPACE
-        and pull_request in ("", "false")
-        and TRUSTED_REPOSITORY in repository
-    )
-
-
-def _fsync_tree(root: Path) -> None:
-    for path in sorted(root.rglob("*")):
-        if not path.is_file():
-            continue
-        with path.open("rb") as handle:
-            os.fsync(handle.fileno())
-    directory = os.open(root, os.O_RDONLY)
-    try:
-        os.fsync(directory)
-    finally:
-        os.close(directory)
-
-
-def restore_module(
-    published: Path,
-    job_dir: Path,
-    *,
-    accept: Callable[[Path], bool] | None = None,
-) -> bool:
-    """Copy a verified module into ``job_dir``. Leave ``job_dir`` unchanged on failure."""
+def restore_module(published: Path, job_dir: Path) -> bool:
+    """Copy a verified module into ``job_dir``. Leave it unchanged on failure."""
     if not is_valid_publication(published):
-        return False
-    if accept is not None and not accept(published):
         return False
     source = published / module_filename()
     expected = (published / "module.sha256").read_text(encoding="utf-8").strip()
@@ -254,112 +263,39 @@ def _write_identity(path: Path, identity: Mapping[str, str]) -> None:
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
-def _unlock_tree(path: Path) -> None:
-    if path.is_dir():
-        path.chmod(0o755)
-        for child in path.iterdir():
-            _unlock_tree(child)
-    elif path.exists():
-        path.chmod(0o644)
-
-
-def _quarantine(published: Path, job_id: str) -> None:
-    rejected = published.parent / f".rejected-{_sanitize(job_id)}"
-    if rejected.exists():
-        _unlock_tree(rejected)
-        shutil.rmtree(rejected)
-    _unlock_tree(published)
-    os.rename(published, rejected)
-
-
-def publish_module(
+def stage_publication(
     job_dir: Path,
-    store: Path,
-    job_id: str,
+    staging_root: Path,
     identity: Mapping[str, str],
-    *,
-    replace_incompatible: bool = False,
-    accept: Callable[[Path], bool] | None = None,
-) -> str:
-    """Publish ``job_dir``'s module into the trusted main slot.
-
-    Returns ``present``, ``published``, or ``skipped``. A compatible
-    publication is kept. An incompatible one is replaced only when
-    ``replace_incompatible`` is set, which the caller limits to main builds.
-    """
-    if cache_key(identity) != store.name or store.parent.name != TRUST_NAMESPACE:
-        log("refusing to publish outside the trusted main ABI directory")
-        return "skipped"
-    published = published_dir(store)
-
-    def accepted(path: Path) -> bool:
-        if not is_valid_publication(path):
-            return False
-        return True if accept is None else accept(path)
-
-    if published.exists() and accepted(published):
-        return "present"
-    if published.exists() and not replace_incompatible:
-        log(f"leaving incompatible cache in place: {published}")
-        return "skipped"
-    if published.exists():
-        try:
-            _quarantine(published, job_id)
-        except OSError as exc:
-            log(f"could not replace incompatible cache: {exc}")
-            if published.exists() and accepted(published):
-                return "present"
-            return "skipped"
-
+    provenance: Mapping[str, str],
+) -> Path | None:
     local = job_dir / module_filename()
     if not local.is_file() or not contains_marker(local):
         log("job-local BF16 AITER module is absent; nothing to publish")
-        return "skipped"
-    try:
-        local.resolve().relative_to(store.resolve())
-    except ValueError:
-        pass
-    else:
-        log("refusing to publish a module that already lives in the store")
-        return "skipped"
+        return None
+    if set(provenance) != set(PROVENANCE_FIELDS):
+        log("refusing to stage an artifact with incomplete provenance")
+        return None
 
-    store.mkdir(parents=True, exist_ok=True)
-    staging = store / f".staging-{_sanitize(job_id)}"
-    if staging.exists():
-        shutil.rmtree(staging)
-    staging.mkdir()
-    try:
-        shutil.copyfile(local, staging / module_filename())
-        digest = sha256_file(staging / module_filename())
-        (staging / "module.sha256").write_text(f"{digest}\n", encoding="utf-8")
-        (staging / "READY").write_text("ok\n", encoding="utf-8")
-        (staging / "TRUST").write_text(f"{TRUST_NAMESPACE}\n", encoding="utf-8")
-        _write_identity(staging / "identity.txt", identity)
-        _fsync_tree(staging)
-        if not is_valid_publication(staging):
-            log("staged module failed verification; not publishing")
-            return "skipped"
-        os.rename(staging, published)
-    except OSError as exc:
-        log(f"immutable publish did not complete: {exc}")
-        if published.exists() and accepted(published):
-            return "present"
-        return "skipped"
-    finally:
-        if staging.exists():
-            shutil.rmtree(staging, ignore_errors=True)
-    try:
-        for path in published.iterdir():
-            path.chmod(0o444)
-        published.chmod(0o555)
-    except OSError as exc:
-        log(f"published module remains readable but was not locked: {exc}")
-    log(f"published {module_filename()} to {published}")
-    return "published"
+    published = staging_root / artifact_prefix(identity)
+    published.mkdir(parents=True, exist_ok=False)
+    shutil.copyfile(local, published / module_filename())
+    digest = sha256_file(published / module_filename())
+    (published / "module.sha256").write_text(f"{digest}\n", encoding="utf-8")
+    (published / "READY").write_text("ok\n", encoding="utf-8")
+    _write_identity(published / "identity.txt", identity)
+    (published / "provenance.json").write_text(
+        json.dumps(dict(provenance), indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    if not is_valid_publication(published):
+        log("staged Buildkite artifact failed verification")
+        return None
+    return published
 
 
 def seed_prebuilt_modules(job_dir: Path, jit_dir: Path | None) -> None:
-    """Copy image-shipped AITER modules so ``AITER_JIT_DIR`` can still import them."""
+    """Copy image-shipped AITER modules so ``AITER_JIT_DIR`` can import them."""
     if jit_dir is None or not jit_dir.is_dir():
         return
     for source in sorted(jit_dir.glob("*.so")):
@@ -505,78 +441,357 @@ def collect_identity(root: Path | None = None, jit_dir: Path | None = None) -> d
     return identity
 
 
-def store_for_identity(hf_home: Path, identity: Mapping[str, str]) -> Path | None:
-    if not hf_home.is_absolute() or hf_home == Path("/") or not hf_home.is_dir():
+def _normalize_repository(value: str) -> str:
+    normalized = value.rstrip("/").removesuffix(".git")
+    return normalized.removeprefix("https://github.com/").removeprefix("git@github.com:")
+
+
+def _pull_request(value: Any) -> str:
+    if isinstance(value, dict):
+        return str(value.get("id") or "")
+    return ""
+
+
+def _fetch_text(url: str) -> str:
+    request = urllib.request.Request(url, headers={"User-Agent": "vllm-omni-aiter-cache/1"})
+    with urllib.request.urlopen(request, timeout=20) as response:
+        data = response.read(_MAX_HTTP_BYTES + 1)
+    if len(data) > _MAX_HTTP_BYTES:
+        raise ValueError(f"response is larger than {_MAX_HTTP_BYTES} bytes")
+    return data.decode("utf-8")
+
+
+def _source_from_details(
+    details: Mapping[str, Any],
+    *,
+    commit: str,
+    branch: str,
+    pull_request: str,
+    exact_checkout: bool,
+) -> BuildSource | None:
+    project = details.get("project")
+    provider = project.get("provider") if isinstance(project, dict) else None
+    if not isinstance(project, dict) or not isinstance(provider, dict):
         return None
+    if project.get("slug") != BUILDKITE_PIPELINE_SLUG:
+        return None
+    if _normalize_repository(str(provider.get("url") or "")) != TRUSTED_REPOSITORY:
+        return None
+    if details.get("commit_id") != commit or details.get("branch_name") != branch:
+        return None
+    if _pull_request(details.get("pull_request")) != pull_request:
+        return None
+    build_id = str(details.get("id") or "")
+    number = details.get("number")
+    if not build_id or not isinstance(number, int):
+        return None
+    return BuildSource(build_id, number, commit, branch, pull_request, exact_checkout)
+
+
+def discover_build_sources(
+    *,
+    branch: str,
+    commit: str,
+    pull_request: str,
+    current_build_id: str,
+    exact_checkout: bool,
+    fetch: Callable[[str], str] = _fetch_text,
+) -> list[BuildSource]:
+    if not branch or not _SHA_PATTERN.fullmatch(commit):
+        return []
+    query = urllib.parse.urlencode({"branch": branch, "commit": commit})
     try:
-        key = cache_key(identity)
-    except ValueError as exc:
-        log(str(exc))
+        listing = fetch(f"{BUILDKITE_PIPELINE_URL}/builds?{query}")
+    except (OSError, UnicodeError, ValueError, urllib.error.URLError) as exc:
+        log(f"could not query Buildkite artifacts for {commit[:12]}: {exc}")
+        return []
+    numbers = list(
+        dict.fromkeys(
+            int(value)
+            for value in re.findall(
+                rf'href="/vllm/{re.escape(BUILDKITE_PIPELINE_SLUG)}/builds/([0-9]+)"',
+                listing,
+            )
+        )
+    )
+    sources: list[BuildSource] = []
+    for number in numbers[:10]:
+        try:
+            details = json.loads(fetch(f"{BUILDKITE_PIPELINE_URL}/builds/{number}.json"))
+        except (json.JSONDecodeError, OSError, UnicodeError, ValueError, urllib.error.URLError) as exc:
+            log(f"could not verify Buildkite build #{number}: {exc}")
+            continue
+        if not isinstance(details, dict):
+            continue
+        source = _source_from_details(
+            details,
+            commit=commit,
+            branch=branch,
+            pull_request=pull_request,
+            exact_checkout=exact_checkout,
+        )
+        if source is not None and source.build_id != current_build_id:
+            sources.append(source)
+    return sources
+
+
+def candidate_sources(
+    env: Mapping[str, str] | None = None,
+    *,
+    fetch: Callable[[str], str] = _fetch_text,
+) -> list[BuildSource]:
+    values = os.environ if env is None else env
+    commit = values.get("BUILDKITE_COMMIT", "")
+    branch = values.get("BUILDKITE_BRANCH", "")
+    pull_request = values.get("BUILDKITE_PULL_REQUEST", "")
+    if pull_request in ("", "false"):
+        pull_request = ""
+    current_build_id = values.get("BUILDKITE_BUILD_ID", "")
+    sources = discover_build_sources(
+        branch=branch,
+        commit=commit,
+        pull_request=pull_request,
+        current_build_id=current_build_id,
+        exact_checkout=True,
+        fetch=fetch,
+    )
+
+    trusted = values.get("VLLM_OMNI_AITER_MHA_TRUSTED_COMMIT", "")
+    if _SHA_PATTERN.fullmatch(trusted) and not (branch == "main" and trusted == commit):
+        sources.extend(
+            discover_build_sources(
+                branch="main",
+                commit=trusted,
+                pull_request="",
+                current_build_id=current_build_id,
+                exact_checkout=False,
+                fetch=fetch,
+            )
+        )
+    return list({source.build_id: source for source in sources}.values())
+
+
+def checkout_commit() -> str:
+    try:
+        completed = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+    except (OSError, subprocess.CalledProcessError, subprocess.TimeoutExpired):
+        return ""
+    value = completed.stdout.strip()
+    return value if _SHA_PATTERN.fullmatch(value) else ""
+
+
+def provenance_from_env(
+    identity: Mapping[str, str],
+    env: Mapping[str, str] | None = None,
+    *,
+    checkout: str | None = None,
+) -> dict[str, str] | None:
+    values = os.environ if env is None else env
+    pull_request = values.get("BUILDKITE_PULL_REQUEST", "")
+    if pull_request in ("", "false"):
+        pull_request = ""
+    provenance = {
+        "build_id": values.get("BUILDKITE_BUILD_ID", ""),
+        "build_number": values.get("BUILDKITE_BUILD_NUMBER", ""),
+        "job_id": values.get("BUILDKITE_JOB_ID", ""),
+        "commit": values.get("BUILDKITE_COMMIT", ""),
+        "checkout_commit": checkout_commit() if checkout is None else checkout,
+        "branch": values.get("BUILDKITE_BRANCH", ""),
+        "pull_request": pull_request,
+        "trusted_commit": values.get("VLLM_OMNI_AITER_MHA_TRUSTED_COMMIT", ""),
+        "repository": _normalize_repository(values.get("BUILDKITE_REPO", "")),
+        "cache_key": cache_key(identity),
+    }
+    if (
+        provenance["repository"] != TRUSTED_REPOSITORY
+        or not provenance["build_id"]
+        or not provenance["build_number"].isdigit()
+        or not provenance["job_id"]
+        or not _SHA_PATTERN.fullmatch(provenance["commit"])
+        or not _SHA_PATTERN.fullmatch(provenance["checkout_commit"])
+        or not provenance["branch"]
+        or not _SHA_PATTERN.fullmatch(provenance["trusted_commit"])
+    ):
         return None
-    return hf_home / CACHE_DIRNAME / TRUST_NAMESPACE / key
+    return provenance
 
 
-def emit_shell_exports(job_dir: Path, store: Path | None) -> None:
+def provenance_matches_source(
+    published: Path,
+    source: BuildSource,
+    identity: Mapping[str, str],
+    env: Mapping[str, str] | None = None,
+    *,
+    current_checkout: str | None = None,
+) -> bool:
+    provenance = _read_provenance(published / "provenance.json")
+    if provenance is None:
+        return False
+    values = os.environ if env is None else env
+    expected = {
+        "build_id": source.build_id,
+        "build_number": str(source.number),
+        "commit": source.commit,
+        "branch": source.branch,
+        "pull_request": source.pull_request,
+        "repository": TRUSTED_REPOSITORY,
+        "cache_key": cache_key(identity),
+    }
+    if any(provenance[field] != value for field, value in expected.items()):
+        log(f"artifact provenance does not match Buildkite build #{source.number}")
+        return False
+    if source.exact_checkout:
+        current_pull_request = values.get("BUILDKITE_PULL_REQUEST", "")
+        if current_pull_request in ("", "false"):
+            current_pull_request = ""
+        if (
+            source.commit != values.get("BUILDKITE_COMMIT", "")
+            or source.branch != values.get("BUILDKITE_BRANCH", "")
+            or source.pull_request != current_pull_request
+        ):
+            return False
+        checkout = checkout_commit() if current_checkout is None else current_checkout
+        trusted = values.get("VLLM_OMNI_AITER_MHA_TRUSTED_COMMIT", "")
+        if provenance["checkout_commit"] != checkout or provenance["trusted_commit"] != trusted:
+            log(f"artifact is not from the same checkout/base identity: build #{source.number}")
+            return False
+    elif (
+        source.branch != "main"
+        or source.pull_request
+        or source.commit != values.get("VLLM_OMNI_AITER_MHA_TRUSTED_COMMIT", "")
+    ):
+        return False
+    return True
+
+
+def download_from_source(
+    source: BuildSource,
+    job_dir: Path,
+    identity: Mapping[str, str],
+    env: Mapping[str, str] | None = None,
+    *,
+    runner: Callable[..., subprocess.CompletedProcess[str]] = subprocess.run,
+    current_checkout: str | None = None,
+) -> bool:
+    prefix = artifact_prefix(identity)
+    with tempfile.TemporaryDirectory(prefix="vllm-omni-aiter-download-") as temporary:
+        root = Path(temporary)
+        try:
+            completed = runner(
+                [
+                    "buildkite-agent",
+                    "artifact",
+                    "download",
+                    f"{prefix.as_posix()}/*",
+                    str(root),
+                    "--build",
+                    source.build_id,
+                ],
+                check=False,
+                capture_output=True,
+                text=True,
+                timeout=300,
+            )
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            log(f"could not download artifact from build #{source.number}: {exc}")
+            return False
+        if completed.returncode != 0:
+            return False
+        published = root / prefix
+        if not publication_matches(published, identity):
+            return False
+        if not provenance_matches_source(
+            published,
+            source,
+            identity,
+            env,
+            current_checkout=current_checkout,
+        ):
+            return False
+        return restore_module(published, job_dir)
+
+
+def emit_shell_exports(job_dir: Path) -> None:
     print(f"export AITER_JIT_DIR={shlex.quote(str(job_dir))}")
     print(f"export GPU_ARCHS={shlex.quote(ARCH)}")
     print(f"export VLLM_OMNI_AITER_MHA_JOB_DIR={shlex.quote(str(job_dir))}")
-    if store is None:
-        print("unset VLLM_OMNI_AITER_MHA_STORE")
-    else:
-        print(f"export VLLM_OMNI_AITER_MHA_STORE={shlex.quote(str(store))}")
+
+
+def upload_publication(
+    staging_root: Path,
+    identity: Mapping[str, str],
+    *,
+    runner: Callable[..., subprocess.CompletedProcess[str]] = subprocess.run,
+) -> bool:
+    query = f"{artifact_prefix(identity).as_posix()}/*"
+    try:
+        completed = runner(
+            ["buildkite-agent", "artifact", "upload", query],
+            cwd=staging_root,
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=300,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        log(f"artifact upload did not complete: {exc}")
+        return False
+    if completed.returncode != 0:
+        detail = (completed.stderr or completed.stdout).strip().splitlines()
+        log(f"artifact upload failed: {detail[-1] if detail else 'unknown error'}")
+        return False
+    return True
 
 
 def prepare() -> int:
     job_dir = job_directory()
     job_dir.mkdir(parents=True, exist_ok=True)
     seed_prebuilt_modules(job_dir, installed_jit_dir())
-    hf_home = Path(os.environ.get("HF_HOME", ""))
-    identity = collect_identity() if hf_home else None
-    store = store_for_identity(hf_home, identity) if hf_home and identity is not None else None
-    published = published_dir(store) if store is not None else None
-    restored = False
-    if store is not None and identity is not None and published is not None:
-        runtime_identity = identity
-        restored = restore_module(
-            published,
-            job_dir,
-            accept=lambda path: publication_matches(path, runtime_identity),
-        )
-    if restored and published is not None:
-        log(f"restored {module_filename()} from {published}")
-    elif store is not None:
-        log(f"no verified module at {published}; compiling into {job_dir}")
+    identity = collect_identity()
+    restored_from: BuildSource | None = None
+    if identity is not None:
+        current_checkout = checkout_commit()
+        for source in candidate_sources():
+            if download_from_source(
+                source,
+                job_dir,
+                identity,
+                current_checkout=current_checkout,
+            ):
+                restored_from = source
+                break
+    if restored_from is not None:
+        log(f"restored {module_filename()} from Buildkite build #{restored_from.number}")
     else:
-        log("shared AITER cache is unavailable; compiling into the job-local directory")
-    emit_shell_exports(job_dir, store)
+        log(f"no verified Buildkite artifact; compiling into {job_dir}")
+    emit_shell_exports(job_dir)
     return 0
 
 
 def publish() -> int:
-    if not is_trusted_main_producer():
-        log(f"skipping publish; shared cache updates are limited to non-PR main builds of {TRUSTED_REPOSITORY}")
-        return 0
-    store_value = os.environ.get("VLLM_OMNI_AITER_MHA_STORE", "")
     job_value = os.environ.get("VLLM_OMNI_AITER_MHA_JOB_DIR", "")
     identity = collect_identity()
-    hf_home = Path(os.environ.get("HF_HOME", ""))
-    expected = store_for_identity(hf_home, identity) if identity is not None else None
-    if not store_value or not job_value or expected is None:
-        log("shared AITER cache was not selected; skipping publish")
+    if not job_value or identity is None:
+        log("job-local AITER cache was not selected; skipping artifact upload")
         return 0
-    if identity is None or Path(store_value).resolve() != expected.resolve():
-        log("skipping publish; store path does not match the trusted main ABI key")
+    provenance = provenance_from_env(identity)
+    if provenance is None:
+        log("Buildkite provenance is incomplete or untrusted; skipping artifact upload")
         return 0
-    runtime_identity = identity
-    outcome = publish_module(
-        Path(job_value),
-        Path(store_value),
-        os.environ.get("BUILDKITE_JOB_ID") or "local",
-        runtime_identity,
-        replace_incompatible=True,
-        accept=lambda path: publication_matches(path, runtime_identity),
-    )
-    log(f"publish result: {outcome}")
+    with tempfile.TemporaryDirectory(prefix="vllm-omni-aiter-upload-") as temporary:
+        root = Path(temporary)
+        published = stage_publication(Path(job_value), root, identity, provenance)
+        if published is None:
+            return 0
+        if not upload_publication(root, identity):
+            return 0
+    log(f"published {module_filename()} as a build-scoped artifact")
     return 0
 
 
