@@ -118,6 +118,33 @@ def test_pr_source_head_is_distinct_from_the_test_merge_checkout() -> None:
     assert provenance["checkout_commit"] == CHECKOUT
 
 
+def test_ldd_uses_runtime_library_paths_and_rejects_missing_dependencies(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    module = tmp_path / cache.module_filename()
+    module.touch()
+    monkeypatch.setenv("LD_LIBRARY_PATH", "/existing/lib")
+    calls: list[tuple[list[str], dict[str, str]]] = []
+
+    def resolved_runner(command: list[str], **kwargs) -> subprocess.CompletedProcess[str]:
+        calls.append((command, kwargs["env"]))
+        return subprocess.CompletedProcess(command, 0, "libtorch_cpu.so => /torch/lib/libtorch_cpu.so\n", "")
+
+    assert cache.ldd_resolves(
+        module,
+        runner=resolved_runner,
+        library_paths=[Path("/torch/lib"), Path("/opt/rocm/lib")],
+    )
+    command, environment = calls[0]
+    assert command == ["ldd", str(module)]
+    assert environment["LD_LIBRARY_PATH"] == "/torch/lib:/opt/rocm/lib:/existing/lib"
+
+    def missing_runner(command: list[str], **_kwargs) -> subprocess.CompletedProcess[str]:
+        return subprocess.CompletedProcess(command, 0, "libtorch_hip.so => not found\n", "")
+
+    assert not cache.ldd_resolves(module, runner=missing_runner, library_paths=[])
+
+
 def test_image_dependency_identity_tracks_the_rocm_image_inputs(tmp_path: Path) -> None:
     root = tmp_path / "repo"
     for relative in cache._IMAGE_DEPENDENCY_PATHS:

@@ -40,7 +40,7 @@ import tempfile
 import urllib.error
 import urllib.parse
 import urllib.request
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -208,21 +208,45 @@ def is_valid_publication(published: Path) -> bool:
     return True
 
 
-def ldd_resolves(path: Path) -> bool:
-    """Return whether the dynamic loader can resolve ``path``."""
+def dynamic_library_paths() -> list[Path]:
+    candidates: list[Path] = []
     try:
-        completed = subprocess.run(
+        torch_distribution = importlib.metadata.distribution("torch")
+        candidates.append(Path(torch_distribution.locate_file("torch/lib")))
+    except importlib.metadata.PackageNotFoundError:
+        pass
+    candidates.extend((Path("/opt/rocm/lib"), Path("/opt/rocm/lib64")))
+    return list(dict.fromkeys(candidate for candidate in candidates if candidate.is_dir()))
+
+
+def ldd_resolves(
+    path: Path,
+    *,
+    runner: Callable[..., subprocess.CompletedProcess[str]] = subprocess.run,
+    library_paths: Iterable[Path] | None = None,
+) -> bool:
+    """Return whether the dynamic loader can resolve ``path``."""
+    environment = os.environ.copy()
+    search_paths = [str(candidate) for candidate in (library_paths or dynamic_library_paths())]
+    search_paths.extend(filter(None, environment.get("LD_LIBRARY_PATH", "").split(os.pathsep)))
+    if search_paths:
+        environment["LD_LIBRARY_PATH"] = os.pathsep.join(dict.fromkeys(search_paths))
+    try:
+        completed = runner(
             ["ldd", str(path)],
             check=False,
             capture_output=True,
             text=True,
             timeout=30,
+            env=environment,
         )
     except (OSError, subprocess.TimeoutExpired) as exc:
         log(f"could not run ldd on {path}: {exc}")
         return True
-    if completed.returncode != 0 or "not found" in completed.stdout:
-        log(f"cached module does not load on this runtime: {path}")
+    missing = [line.strip() for line in completed.stdout.splitlines() if "not found" in line]
+    if completed.returncode != 0 or missing:
+        detail = f": {', '.join(missing[:3])}" if missing else ""
+        log(f"cached module does not load on this runtime: {path}{detail}")
         return False
     return True
 
