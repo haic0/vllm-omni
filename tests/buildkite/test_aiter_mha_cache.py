@@ -51,9 +51,11 @@ def _env(**updates: str) -> dict[str, str]:
         "BUILDKITE_BUILD_ID": "build-pr-8848",
         "BUILDKITE_BUILD_NUMBER": "14000",
         "BUILDKITE_JOB_ID": "job-z-image",
-        "BUILDKITE_COMMIT": HEAD,
+        "BUILDKITE_COMMIT": CHECKOUT,
         "BUILDKITE_BRANCH": "haic0:ci/amd-aiter-mha-cache",
         "BUILDKITE_PULL_REQUEST": "8848",
+        "BUILDKITE_PULL_REQUEST_HEAD_COMMIT": HEAD,
+        "BUILDKITE_PULL_REQUEST_USING_MERGE_REFSPEC": "true",
         "BUILDKITE_REPO": "https://github.com/vllm-project/vllm-omni.git",
         "VLLM_OMNI_AITER_MHA_TRUSTED_COMMIT": BASE,
     }
@@ -103,6 +105,17 @@ def test_cache_key_changes_when_the_runtime_identity_changes() -> None:
     assert cache.cache_key(changed_core) != original
     with pytest.raises(ValueError, match="missing"):
         cache.cache_key({**_identity(), "aiter": ""})
+
+
+def test_pr_source_head_is_distinct_from_the_test_merge_checkout() -> None:
+    env = _env()
+
+    assert cache.source_commit(env) == HEAD
+    assert cache.checkout_commit(env) == CHECKOUT
+    provenance = cache.provenance_from_env(_identity(), env)
+    assert provenance is not None
+    assert provenance["commit"] == HEAD
+    assert provenance["checkout_commit"] == CHECKOUT
 
 
 def test_image_dependency_identity_tracks_the_rocm_image_inputs(tmp_path: Path) -> None:
@@ -189,7 +202,7 @@ def test_same_pr_artifact_cannot_cross_head_base_or_pr_identity(tmp_path: Path) 
         published,
         source,
         identity,
-        _env(BUILDKITE_COMMIT="4" * 40),
+        _env(BUILDKITE_PULL_REQUEST_HEAD_COMMIT="4" * 40),
         current_checkout=CHECKOUT,
     )
     assert not cache.provenance_matches_source(
@@ -277,6 +290,24 @@ def test_discovery_uses_server_metadata_and_excludes_the_current_build() -> None
             True,
         )
     ]
+
+
+def test_candidate_sources_queries_the_pr_head_not_the_test_merge_commit() -> None:
+    requested: list[str] = []
+
+    def fetch(url: str) -> str:
+        requested.append(url)
+        if url.endswith("/14000.json"):
+            return json.dumps(_details())
+        if f"commit={HEAD}" in url:
+            return '<a href="/vllm/vllm-omni-amd-ci/builds/14000">previous</a>'
+        return ""
+
+    sources = cache.candidate_sources(_env(BUILDKITE_BUILD_ID="current"), fetch=fetch)
+
+    assert [source.number for source in sources] == [14000]
+    assert any(f"commit={HEAD}" in url for url in requested)
+    assert not any(f"commit={CHECKOUT}" in url for url in requested)
 
 
 def test_discovery_rejects_forged_branch_pr_and_provider_metadata() -> None:

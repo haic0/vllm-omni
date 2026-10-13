@@ -541,7 +541,7 @@ def candidate_sources(
     fetch: Callable[[str], str] = _fetch_text,
 ) -> list[BuildSource]:
     values = os.environ if env is None else env
-    commit = values.get("BUILDKITE_COMMIT", "")
+    commit = source_commit(values)
     branch = values.get("BUILDKITE_BRANCH", "")
     pull_request = values.get("BUILDKITE_PULL_REQUEST", "")
     if pull_request in ("", "false"):
@@ -571,7 +571,21 @@ def candidate_sources(
     return list({source.build_id: source for source in sources}.values())
 
 
-def checkout_commit() -> str:
+def source_commit(env: Mapping[str, str] | None = None) -> str:
+    values = os.environ if env is None else env
+    pull_request = values.get("BUILDKITE_PULL_REQUEST", "")
+    pull_request_head = values.get("BUILDKITE_PULL_REQUEST_HEAD_COMMIT", "")
+    if pull_request not in ("", "false") and _SHA_PATTERN.fullmatch(pull_request_head):
+        return pull_request_head
+    commit = values.get("BUILDKITE_COMMIT", "")
+    return commit if _SHA_PATTERN.fullmatch(commit) else ""
+
+
+def checkout_commit(env: Mapping[str, str] | None = None) -> str:
+    values = os.environ if env is None else env
+    commit = values.get("BUILDKITE_COMMIT", "")
+    if _SHA_PATTERN.fullmatch(commit):
+        return commit
     try:
         completed = subprocess.run(
             ["git", "rev-parse", "HEAD"],
@@ -600,8 +614,8 @@ def provenance_from_env(
         "build_id": values.get("BUILDKITE_BUILD_ID", ""),
         "build_number": values.get("BUILDKITE_BUILD_NUMBER", ""),
         "job_id": values.get("BUILDKITE_JOB_ID", ""),
-        "commit": values.get("BUILDKITE_COMMIT", ""),
-        "checkout_commit": checkout_commit() if checkout is None else checkout,
+        "commit": source_commit(values),
+        "checkout_commit": checkout_commit(values) if checkout is None else checkout,
         "branch": values.get("BUILDKITE_BRANCH", ""),
         "pull_request": pull_request,
         "trusted_commit": values.get("VLLM_OMNI_AITER_MHA_TRUSTED_COMMIT", ""),
@@ -651,12 +665,12 @@ def provenance_matches_source(
         if current_pull_request in ("", "false"):
             current_pull_request = ""
         if (
-            source.commit != values.get("BUILDKITE_COMMIT", "")
+            source.commit != source_commit(values)
             or source.branch != values.get("BUILDKITE_BRANCH", "")
             or source.pull_request != current_pull_request
         ):
             return False
-        checkout = checkout_commit() if current_checkout is None else current_checkout
+        checkout = checkout_commit(values) if current_checkout is None else current_checkout
         trusted = values.get("VLLM_OMNI_AITER_MHA_TRUSTED_COMMIT", "")
         if provenance["checkout_commit"] != checkout or provenance["trusted_commit"] != trusted:
             log(f"artifact is not from the same checkout/base identity: build #{source.number}")
