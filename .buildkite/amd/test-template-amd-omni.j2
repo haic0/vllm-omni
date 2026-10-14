@@ -97,9 +97,6 @@ steps:
 {% for step_group in steps %}
 {% if step_group.group %}
   - group: "{{ step_group.group }}"
-{% if step_group["if"] %}
-    if: {{ step_group["if"] }}
-{% endif %}
 {% if step_group.depends_on %}
     depends_on: {{ step_group.depends_on }}
 {% endif %}
@@ -107,9 +104,6 @@ steps:
 {% for step in step_group.steps %}
 {% if step.mirror_hardwares and mirror_hw in step.mirror_hardwares %}
       - label: "{{ step.agent_pool }}: {{ step.label }}"
-{% if step["if"] %}
-        if: {{ step["if"] }}
-{% endif %}
         depends_on: amd-build
         agents:
           {% if step.agent_pool %}
@@ -187,9 +181,6 @@ steps:
 {% elif step_group.mirror_hardwares and mirror_hw in step_group.mirror_hardwares %}
 {% set step = step_group %}
   - label: "{{ step.agent_pool }}: {{ step.label }}"
-{% if step["if"] %}
-    if: {{ step["if"] }}
-{% endif %}
     depends_on: amd-build
     agents:
       {% if step.agent_pool %}

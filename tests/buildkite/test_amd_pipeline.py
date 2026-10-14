@@ -689,11 +689,12 @@ def test_weekly_reliability_is_distinct_from_nightly() -> None:
     }
 
     assert group["group"] == "Reliability Test"
-    assert group["if"] == ('build.env("WEEKLY") == "1" || build.pull_request.labels includes "weekly-test"')
+    assert "if" not in group
     assert [step["label"] for step in group["steps"]] == list(jobs)
     for step in group["steps"]:
         pool, cards, filename = jobs[step["label"]]
         command = "\n".join(step["commands"])
+        assert "if" not in step
         assert step["agent_pool"] == pool
         assert step["grade"] == "NonBlocking"
         assert step["depends_on"] == "amd-build"
@@ -702,13 +703,6 @@ def test_weekly_reliability_is_distinct_from_nightly() -> None:
         assert filename not in nightly
     assert "tests/dfx/reliability/" not in nightly
     assert "Qwen3-Omni Function Expansion" not in AMD_WEEKLY_PIPELINE.read_text(encoding="utf-8")
-
-
-def test_amd_template_preserves_step_if() -> None:
-    template = AMD_TEMPLATE.read_text(encoding="utf-8")
-
-    assert template.count('step_group["if"]') == 2
-    assert template.count('step["if"]') == 4
 
 
 def test_amd_runner_preserves_piped_failures_and_empty_collection() -> None:

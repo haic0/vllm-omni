@@ -10,10 +10,7 @@ env:
 
 steps:
   - group: "Reliability Test"
-    if: build.env("WEEKLY") == "1" || build.pull_request.labels includes "weekly-test"
     steps:
-      # Requires the MI325 hardware_test marks. Until those land, this marker
-      # collects no H100-only fault cases.
       - label: "Reliability Test · qwen3-omni"
         agent_pool: mi300_2
         depends_on: amd-build

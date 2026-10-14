@@ -7,10 +7,12 @@ import importlib.util
 from pathlib import Path
 
 import pytest
+import yaml
 
 pytestmark = [pytest.mark.core_model, pytest.mark.cpu]
 
 SELECTOR_PATH = Path(".buildkite/amd/scripts/select_test_suites.py")
+WEEKLY_PIPELINE = Path(".buildkite/amd/test-amd-weekly.yml")
 SPEC = importlib.util.spec_from_file_location("select_test_suites", SELECTOR_PATH)
 assert SPEC is not None and SPEC.loader is not None
 SELECTOR = importlib.util.module_from_spec(SPEC)
@@ -45,6 +47,20 @@ def test_debug_override_takes_precedence_and_normalizes_input():
         debug_test_yaml=" NIGHTLY, merge, ready,",
         nightly=False,
     ) == ("nightly", "merge", "ready")
+
+
+def test_debug_weekly_selects_four_unconditional_jobs():
+    assert SELECTOR.select_amd_test_suites(
+        branch="feature",
+        labels=(),
+        debug_test_yaml="weekly",
+    ) == ("weekly",)
+
+    weekly = yaml.safe_load(WEEKLY_PIPELINE.read_text(encoding="utf-8"))
+    group = weekly["steps"][0]
+    assert "if" not in group
+    assert len(group["steps"]) == 4
+    assert all("if" not in step for step in group["steps"])
 
 
 def test_scheduled_main_selects_only_nightly():
