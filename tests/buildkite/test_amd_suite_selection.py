@@ -25,6 +25,7 @@ SPEC.loader.exec_module(SELECTOR)
         ("feature", ("merge-test",), ("merge",)),
         ("feature", ("merge-test", "ready"), ("ready", "merge")),
         ("feature", ("nightly-test",), ("nightly",)),
+        ("feature", ("weekly-test",), ("weekly",)),
         ("feature", ("ready", "merge-test", "nightly-test"), ("ready", "merge", "nightly")),
         ("feature", ("amd-test",), ("ready",)),
         ("feature", ("amd-test", "merge-test"), ("merge",)),
@@ -54,6 +55,24 @@ def test_scheduled_main_selects_only_nightly():
     ) == ("nightly",)
 
 
+def test_scheduled_main_selects_only_weekly():
+    assert SELECTOR.select_amd_test_suites(
+        branch="main",
+        labels=(),
+        weekly=True,
+    ) == ("weekly",)
+
+
+def test_scheduled_main_rejects_nightly_and_weekly_together():
+    with pytest.raises(ValueError, match="nightly or weekly"):
+        SELECTOR.select_amd_test_suites(
+            branch="main",
+            labels=(),
+            nightly=True,
+            weekly=True,
+        )
+
+
 def test_empty_debug_override_uses_normal_selection():
     assert SELECTOR.select_amd_test_suites(
         branch="feature",
@@ -62,7 +81,7 @@ def test_empty_debug_override_uses_normal_selection():
     ) == ("merge",)
 
 
-@pytest.mark.parametrize("value", ["ready,ready", "nightly,nightly", "weekly", ", ,", " \t"])
+@pytest.mark.parametrize("value", ["ready,ready", "nightly,nightly", ", ,", " \t"])
 def test_invalid_debug_override(value):
     with pytest.raises(ValueError):
         SELECTOR.select_amd_test_suites(
