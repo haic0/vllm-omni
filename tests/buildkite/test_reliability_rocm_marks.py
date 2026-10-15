@@ -26,6 +26,19 @@ def _decorator_name(decorator: ast.expr) -> str | None:
     return getattr(func, "id", None) or getattr(func, "attr", None)
 
 
+def _string_tuple_assignment(tree: ast.Module, name: str) -> tuple[str, ...]:
+    assignment = next(
+        node
+        for node in tree.body
+        if isinstance(node, ast.Assign)
+        and any(isinstance(target, ast.Name) and target.id == name for target in node.targets)
+    )
+    value = ast.literal_eval(assignment.value)
+    assert isinstance(value, tuple)
+    assert all(isinstance(item, str) for item in value)
+    return value
+
+
 @pytest.mark.parametrize(("filename", "num_cards"), FAULT_CARD_COUNTS.items())
 def test_fault_injection_tests_declare_mi325(filename: str, num_cards: int) -> None:
     path = RELIABILITY_DIR / filename
@@ -44,6 +57,12 @@ def test_fault_injection_tests_declare_mi325(filename: str, num_cards: int) -> N
         names = [_decorator_name(dec) for dec in node.decorator_list]
         if "parametrize" in names:
             assert names.index("hardware_test") < names.index("parametrize")
+
+
+@pytest.mark.parametrize("filename", FAULT_CARD_COUNTS)
+def test_gpu_oom_fault_contract_accepts_connection_loss(filename: str) -> None:
+    tree = ast.parse((RELIABILITY_DIR / filename).read_text(encoding="utf-8"))
+    assert "connection" in _string_tuple_assignment(tree, "FAULT_ERROR_KEYWORDS")
 
 
 def test_nightly_pipeline_does_not_own_fault_injection_files() -> None:
