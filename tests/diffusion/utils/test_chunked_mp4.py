@@ -11,6 +11,14 @@ from vllm_omni.diffusion.utils.media_utils import ChunkedMP4Encoder, mux_av_vide
 
 pytestmark = [pytest.mark.core_model, pytest.mark.cpu, pytest.mark.diffusion]
 
+# ``threads=1`` still leaves lookahead, B-adapt, and mbtree enabled. On the
+# AMD image those decisions diverged between the one-shot mux and the chunked
+# worker (x264 core 165), so the byte compare pins a deterministic encode.
+_BYTE_STABLE_X264 = {
+    "threads": "1",
+    "x264-params": "bframes=0:b-adapt=0:mbtree=0:rc-lookahead=0:sync-lookahead=0:sliced-threads=0:deterministic=1",
+}
+
 
 def _frames() -> np.ndarray:
     rng = np.random.default_rng(6872)
@@ -24,14 +32,14 @@ def test_chunked_mp4_is_byte_identical_to_whole_mux() -> None:
         width=24,
         height=16,
         fps=24,
-        video_codec_options={"threads": "1"},
+        video_codec_options=_BYTE_STABLE_X264,
     )
     encoder = ChunkedMP4Encoder(
         width=24,
         height=16,
         fps=24,
         max_pending=2,
-        video_codec_options={"threads": "1"},
+        video_codec_options=_BYTE_STABLE_X264,
     )
     for start in (0, 1, 5):
         stop = {0: 1, 1: 5, 5: len(frames)}[start]
@@ -48,7 +56,7 @@ def test_chunked_mp4_is_byte_identical_to_whole_mux() -> None:
         fps=24,
         audio_waveform=audio,
         audio_sample_rate=32000,
-        video_codec_options={"threads": "1"},
+        video_codec_options=_BYTE_STABLE_X264,
     )
     encoder_audio = ChunkedMP4Encoder(
         width=24,
@@ -56,7 +64,7 @@ def test_chunked_mp4_is_byte_identical_to_whole_mux() -> None:
         fps=24,
         audio_waveform=audio,
         audio_sample_rate=32000,
-        video_codec_options={"threads": "1"},
+        video_codec_options=_BYTE_STABLE_X264,
     )
     encoder_audio.push(frames)
     assert encoder_audio.finish() == baseline_audio

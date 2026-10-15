@@ -448,9 +448,10 @@ def mux_av_video_audio_bytes(
     """Mux preconstructed video frames and optional audio into MP4 bytes."""
     buf = io.BytesIO()
     with cast(Any, av.open(buf, mode="w", format="mp4")) as container:
+        frame_rate = Fraction(fps).limit_denominator(10000)
         v_stream = cast(
             av.VideoStream,
-            container.add_stream(video_codec, rate=Fraction(fps).limit_denominator(10000)),
+            container.add_stream(video_codec, rate=frame_rate),
         )
         v_stream.width = width
         v_stream.height = height
@@ -476,7 +477,13 @@ def mux_av_video_audio_bytes(
             a_stream = cast(av.AudioStream, container.add_stream(audio_codec, rate=effective_audio_sample_rate))
             a_stream.layout = layout
 
-        for frame in video_frames:
+        # Unset timestamps are not a stable x264 input: the chunked worker can
+        # stall between chunks, so stamp decode order before encoding.
+        frame_time_base = Fraction(1, 1) / frame_rate
+        for index, frame in enumerate(video_frames):
+            if frame.pts is None:
+                frame.pts = index
+                frame.time_base = frame_time_base
             for packet in v_stream.encode(frame):
                 container.mux(packet)
         for packet in v_stream.encode():
