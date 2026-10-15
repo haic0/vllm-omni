@@ -5,7 +5,10 @@
 
 from __future__ import annotations
 
+import os
+import subprocess
 import time
+from pathlib import Path
 
 import pytest
 
@@ -84,3 +87,55 @@ def test_sidecar_program_uses_rejection_helper_and_compiles() -> None:
 
     assert "allocate_device_chunk" in program
     compile(program, "<oom-sidecar>", "exec")
+
+
+def test_sidecar_program_runs_in_fresh_subprocess(tmp_path: Path) -> None:
+    (tmp_path / "torch.py").write_text(
+        """
+class _DeviceProperties:
+    total_memory = 2048
+
+
+class _Cuda:
+    @staticmethod
+    def init():
+        pass
+
+    @staticmethod
+    def set_device(device):
+        pass
+
+    @staticmethod
+    def get_device_properties(device):
+        return _DeviceProperties()
+
+    @staticmethod
+    def mem_get_info(device):
+        return 1024, 2048
+
+    @staticmethod
+    def empty(*args, **kwargs):
+        raise AssertionError("target ratio zero must not allocate")
+
+
+cuda = _Cuda()
+float16 = object()
+""",
+        encoding="utf-8",
+    )
+    command = _build_sidecar_cmd(0, 0.0, 1, False, None)
+    env = os.environ.copy()
+    env["PYTHONPATH"] = os.pathsep.join(path for path in (str(tmp_path), env.get("PYTHONPATH", "")) if path)
+
+    completed = subprocess.run(
+        command,
+        capture_output=True,
+        check=False,
+        env=env,
+        text=True,
+        timeout=5,
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    assert "READY:" in completed.stdout
+    assert completed.stdout.rstrip().endswith("DONE")

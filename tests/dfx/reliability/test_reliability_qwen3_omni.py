@@ -387,8 +387,8 @@ def test_reliability_fault_gpu_oom_error_contract_consistent_chat_speech(
     mix_base = _mix_chat_completions_probe_payload(omni_server_function)
     oom_contract_timeout_sec = 120
     try:
-        # Text-only short prompts fit in the server's reserved pool on MI300.
-        # Use the same heavy mix the large-payload probe allocates.
+        # Preserve the text-only output contract while using the heavy
+        # multimodal input needed to reach the allocation path on MI300.
         chat_status, chat_body = post_json_raw(
             host,
             port,
@@ -397,7 +397,7 @@ def test_reliability_fault_gpu_oom_error_contract_consistent_chat_speech(
                 "model": mix_base["model"],
                 "messages": mix_base["messages"],
                 "stream": False,
-                "modalities": ["text", "audio"],
+                "modalities": ["text"],
                 "max_tokens": 256,
             },
             timeout_sec=oom_contract_timeout_sec,

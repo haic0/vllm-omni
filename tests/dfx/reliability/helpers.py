@@ -205,7 +205,11 @@ def _build_sidecar_cmd(
     max_free_bytes: int | None,
 ) -> list[str]:
     sidecar = (
-        inspect.getsource(allocate_device_chunk)
+        "from __future__ import annotations\n"
+        "from collections.abc import Callable\n"
+        "from typing import Any\n"
+        f"_ALLOC_ATTEMPT_TIMEOUT_SEC = {_ALLOC_ATTEMPT_TIMEOUT_SEC!r}\n\n"
+        + inspect.getsource(allocate_device_chunk)
         + r"""
 import sys
 import time
