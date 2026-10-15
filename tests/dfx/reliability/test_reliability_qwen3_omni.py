@@ -87,9 +87,11 @@ class _OomInjectionConfig(_OomInjectionBaseConfig):
 OOM_INJECTION_CONFIG: _OomInjectionConfig = {
     "device": _default_oom_device_spec(),
     "target_mem_ratio": 0.95,
-    # MI325 can retain several GiB after allocating 95% of initially free memory.
-    # Keep a small absolute ceiling so the hard-failure probes deterministically OOM.
-    "max_free_bytes": 256 * 1024 * 1024,
+    # MI300 keeps a large caching-allocator pool, so a 256MB device-free ceiling
+    # still lets the text and multimodal probes return 200. HIP also retries an
+    # OOM instead of failing the request. Leave only a few MB so those probes
+    # have to allocate. CUDA keeps the wider 256MB ceiling.
+    "max_free_bytes": 32 * 1024 * 1024 if getattr(torch.version, "hip", None) else 256 * 1024 * 1024,
     "hold_seconds": 0,
     "startup_timeout_sec": 20,
     "strict": False,
@@ -385,6 +387,8 @@ def test_reliability_fault_gpu_oom_error_contract_consistent_chat_speech(
     mix_base = _mix_chat_completions_probe_payload(omni_server_function)
     oom_contract_timeout_sec = 120
     try:
+        # Text-only short prompts fit in the server's reserved pool on MI300.
+        # Use the same heavy mix the large-payload probe allocates.
         chat_status, chat_body = post_json_raw(
             host,
             port,
@@ -393,7 +397,8 @@ def test_reliability_fault_gpu_oom_error_contract_consistent_chat_speech(
                 "model": mix_base["model"],
                 "messages": mix_base["messages"],
                 "stream": False,
-                "modalities": ["text"],
+                "modalities": ["text", "audio"],
+                "max_tokens": 256,
             },
             timeout_sec=oom_contract_timeout_sec,
         )
