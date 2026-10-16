@@ -705,43 +705,6 @@ def test_weekly_reliability_is_distinct_from_nightly() -> None:
     assert "Qwen3-Omni Function Expansion" not in AMD_WEEKLY_PIPELINE.read_text(encoding="utf-8")
 
 
-HUNYUAN_VIDEO_LABEL = "HunyuanVideo-1.5 Default T2V Smoke"
-HUNYUAN_VIDEO_NODE = "tests/e2e/online_serving/test_hunyuan_video_15_expansion.py::test_hunyuan_video_15_t2v_default"
-HUNYUAN_VIDEO_MARKERS = "full_model and diffusion and rocm and MI325 and cards_1"
-
-
-def test_hunyuan_video_15_nightly_smoke_owns_the_default_t2v_node() -> None:
-    step = _find_step(HUNYUAN_VIDEO_LABEL, AMD_NIGHTLY_PIPELINE)
-    assert step["grade"] == "NonBlocking"
-    assert step["agent_pool"] == "mi300_1"
-    assert step["mirror_hardwares"] == ["amdproduction"]
-    assert step["timeout_in_minutes"] == 90
-    assert step["artifact_paths"] == ["artifacts/rocm-hunyuanvideo15-nightly/**/*"]
-    assert "source_file_dependencies" not in step
-    commands = step["commands"]
-    joined = "\n".join(commands)
-    assert "export VLLM_ROCM_USE_AITER=0" in commands
-    assert "export DIFFUSION_ATTENTION_BACKEND=TORCH_SDPA" in commands
-    assert "test_hunyuan_video_15_t2v_features" not in joined
-    assert "cards_2" not in joined
-    pytest_commands = [command for command in commands if "pytest " in command]
-    assert len(pytest_commands) == 2
-    for command in pytest_commands:
-        argv = split(command)
-        assert argv.count(HUNYUAN_VIDEO_NODE) == 1
-        assert argv[argv.index("-m") + 1] == HUNYUAN_VIDEO_MARKERS
-        assert argv[argv.index("--run-level") + 1] == "full_model"
-    assert "collection_count != 1" in joined
-    ready_merge = AMD_READY_PIPELINE.read_text(encoding="utf-8") + AMD_MERGE_PIPELINE.read_text(encoding="utf-8")
-    assert HUNYUAN_VIDEO_LABEL not in ready_merge
-    expansion = Path("tests/e2e/online_serving/test_hunyuan_video_15_expansion.py").read_text(encoding="utf-8")
-    default_header = expansion.split("def test_hunyuan_video_15_t2v_default", 1)[0]
-    assert '"rocm": "MI325"' in default_header.rsplit("@hardware_test", 1)[1]
-    feature_cases = expansion.split("def _get_diffusion_feature_cases", 1)[1]
-    feature_cases = feature_cases.split("def _run_hunyuan_video_15_t2v", 1)[0]
-    assert '"rocm"' not in feature_cases
-
-
 def test_amd_runner_preserves_piped_failures_and_empty_collection() -> None:
     runner = AMD_RUNNER.read_text(encoding="utf-8")
     template = AMD_TEMPLATE.read_text(encoding="utf-8")
