@@ -755,7 +755,8 @@ def _ring_flash(
             k_fresh_ptr = k_row + token[None, :] * ks2 + dims[:, None] * ks3
             k_cache_ptr = cache_ptr + base + cols[None, :] * head_dim + dims[:, None]
             if SELECT_PTR:
-                k = tl.load(tl.where(fresh[None, :], k_fresh_ptr, k_cache_ptr), in_ring[None, :], 0)
+                k_ptr = tl.where(fresh[None, :], k_fresh_ptr, k_cache_ptr)
+                k = tl.load(k_ptr, in_ring[None, :], 0)
             else:
                 k_fresh = tl.load(k_fresh_ptr, fresh[None, :] & in_ring[None, :], 0)
                 k_cache = tl.load(k_cache_ptr, (~fresh)[None, :] & in_ring[None, :], 0)
@@ -799,7 +800,8 @@ def _ring_flash(
             v_fresh_ptr = v_row + token[:, None] * vs2 + dims[None, :] * vs3
             v_cache_ptr = cache_ptr + v_base + cols[:, None] * head_dim + dims[None, :]
             if SELECT_PTR:
-                v = tl.load(tl.where(fresh[:, None], v_fresh_ptr, v_cache_ptr), in_ring[:, None], 0)
+                v_ptr = tl.where(fresh[:, None], v_fresh_ptr, v_cache_ptr)
+                v = tl.load(v_ptr, in_ring[:, None], 0)
             else:
                 v_fresh = tl.load(v_fresh_ptr, fresh[:, None] & in_ring[:, None], 0)
                 v_cache = tl.load(v_cache_ptr, (~fresh)[:, None] & in_ring[:, None], 0)
