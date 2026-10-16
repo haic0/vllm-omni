@@ -1031,8 +1031,24 @@ def slot_ring_flash_attention(
     Same state and masking contract; one write+attend launch plus the offset
     advance. FTZ and reduction-layout choices prevent a universal bitwise
     output guarantee. ``skip_empty_tiles`` is accepted for signature
-    compatibility: this kernel always skips wholly masked tiles.
+    compatibility: this kernel always skips wholly masked tiles. Non-CUDA
+    runtimes use the portable ring path to preserve exact output parity.
     """
+    if not _CUDA_TRITON:
+        # HIP cannot use the CUDA pointer-select path. Its separate masked
+        # loads change the reduction layout for larger chunks, so preserve the
+        # established exact-output contract with the portable ring kernels.
+        return slot_ring_attention(
+            q,
+            k,
+            v,
+            cache,
+            end_offset,
+            slot_ids,
+            valid_lengths,
+            context,
+            skip_empty_tiles,
+        )
     b = q.shape[0]
     _check_inputs(q, k, v, cache, (end_offset, slot_ids, valid_lengths), context)
     if end_offset.shape != (cache.shape[1],) or slot_ids.shape != (b,) or valid_lengths.shape != (b,):
@@ -1073,9 +1089,22 @@ def slot_ring_flash_attention_rows(
 ) -> torch.Tensor:
     """``slot_ring_attention_rows`` with the single-pass flash ring kernel.
 
-    One launch per chunk, preserving ring updates and causal masking; see
-    ``_ring_flash`` for the numerical limitations.
+    One launch per chunk on CUDA, preserving ring updates and causal masking;
+    see ``_ring_flash`` for the numerical limitations. Non-CUDA runtimes use
+    the portable ring path to preserve exact output parity.
     """
+    if not _CUDA_TRITON:
+        return slot_ring_attention_rows(
+            q,
+            k,
+            v,
+            cache,
+            starts,
+            slot_ids,
+            valid_lengths,
+            context,
+            skip_empty_tiles,
+        )
     b = q.shape[0]
     _check_inputs(q, k, v, cache, (starts, slot_ids, valid_lengths), context)
     if starts.shape != (b,) or slot_ids.shape != (b,) or valid_lengths.shape != (b,):
