@@ -12,7 +12,11 @@ from pathlib import Path
 
 import pytest
 
-from tests.dfx.reliability.helpers import _build_sidecar_cmd, allocate_device_chunk
+from tests.dfx.reliability.helpers import (
+    _build_sidecar_cmd,
+    allocate_device_chunk,
+    reliability_scenarios_for_eager_oom,
+)
 
 pytestmark = [pytest.mark.core_model, pytest.mark.cpu]
 
@@ -139,3 +143,26 @@ float16 = object()
     assert completed.returncode == 0, completed.stderr
     assert "READY:" in completed.stdout
     assert completed.stdout.rstrip().endswith("DONE")
+
+
+def test_qwen_hip_oom_scenarios_force_eager_request_allocations() -> None:
+    base = [{"test_name": "qwen", "server_params": {"model": "Qwen/Qwen3-Omni"}}]
+    scenarios = reliability_scenarios_for_eager_oom(base, is_hip=True, stage_ids=(0, 1))
+
+    assert scenarios is not base
+    assert "update" not in base[0]["server_params"]
+    for scenario in scenarios:
+        assert scenario["server_params"]["update"] == {
+            "stages": {
+                0: {"enforce_eager": True},
+                1: {"enforce_eager": True},
+            }
+        }
+
+
+def test_qwen_cuda_oom_scenarios_preserve_normal_runtime_config() -> None:
+    base = [{"test_name": "qwen", "server_params": {"model": "Qwen/Qwen3-Omni"}}]
+    scenarios = reliability_scenarios_for_eager_oom(base, is_hip=False, stage_ids=(0, 1))
+
+    assert scenarios == base
+    assert scenarios is not base

@@ -34,6 +34,7 @@ from tests.dfx.reliability.helpers import (
     make_server_tree_kill_fault_injector,
     post_chat_completions_raw,
     post_json_raw,
+    reliability_scenarios_for_eager_oom,
     run_fault_injection_with_rate_load,
     stop_gpu_oom_hogs,
     worker_residual_timeout_after_kill_signal,
@@ -358,11 +359,19 @@ def _assert_server_alive_after_fault(host: str, port: int, *, scenario: str) -> 
 
 
 QWEN_PARAMS = create_reliability_omni_server_params(RELIABILITY_SCENARIOS, DEPLOY_CONFIGS_DIR)
+QWEN_OOM_PARAMS = create_reliability_omni_server_params(
+    reliability_scenarios_for_eager_oom(
+        RELIABILITY_SCENARIOS,
+        is_hip=bool(getattr(torch.version, "hip", None)),
+        stage_ids=(0, 1),
+    ),
+    DEPLOY_CONFIGS_DIR,
+)
 
 
 @pytest.mark.slow
 @hardware_test(res={"cuda": "H100", "rocm": "MI325"}, num_cards=2)
-@pytest.mark.parametrize("omni_server_function", QWEN_PARAMS, indirect=True)
+@pytest.mark.parametrize("omni_server_function", QWEN_OOM_PARAMS, indirect=True)
 def test_reliability_fault_gpu_oom_error_contract_consistent_chat_speech(
     omni_server_function,
 ) -> None:
@@ -437,7 +446,7 @@ def test_reliability_fault_gpu_oom_error_contract_consistent_chat_speech(
 
 @pytest.mark.slow
 @hardware_test(res={"cuda": "H100", "rocm": "MI325"}, num_cards=2)
-@pytest.mark.parametrize("omni_server_function", QWEN_PARAMS, indirect=True)
+@pytest.mark.parametrize("omni_server_function", QWEN_OOM_PARAMS, indirect=True)
 def test_reliability_fault_gpu_oom_chat_large_payload_failure(omni_server_function, online_client_function) -> None:
     device_spec = resolve_oom_device_spec(
         OOM_INJECTION_CONFIG,
@@ -480,7 +489,7 @@ def test_reliability_fault_gpu_oom_chat_large_payload_failure(omni_server_functi
 
 @pytest.mark.slow
 @hardware_test(res={"cuda": "H100", "rocm": "MI325"}, num_cards=2)
-@pytest.mark.parametrize("omni_server_function", QWEN_PARAMS, indirect=True)
+@pytest.mark.parametrize("omni_server_function", QWEN_OOM_PARAMS, indirect=True)
 def test_reliability_fault_gpu_oom_concurrent_pressure_failure(omni_server_function, online_client_function) -> None:
     device_spec = resolve_oom_device_spec(
         OOM_INJECTION_CONFIG,

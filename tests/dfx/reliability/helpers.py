@@ -17,6 +17,7 @@ markers; post-fault **process** cleanup assertions use the full captured
 from __future__ import annotations
 
 import concurrent.futures
+import copy
 import http.client
 import inspect
 import json
@@ -160,6 +161,30 @@ def extract_openai_error_contract_from_payload(payload: Any) -> dict[str, Any] |
 
 
 _ALLOC_ATTEMPT_TIMEOUT_SEC = 2.0
+
+
+def reliability_scenarios_for_eager_oom(
+    scenarios: list[dict[str, Any]],
+    *,
+    is_hip: bool,
+    stage_ids: Sequence[int],
+) -> list[dict[str, Any]]:
+    """Clone scenarios and force selected HIP stages to allocate eagerly.
+
+    External sidecars only consume device-global free memory. A server can
+    otherwise reuse captured graph pools or cached profile buffers, causing an
+    OOM probe to succeed without making a new device allocation.
+    """
+    cloned = copy.deepcopy(scenarios)
+    if not is_hip:
+        return cloned
+    for scenario in cloned:
+        server_params = scenario["server_params"]
+        updates = server_params.setdefault("update", {})
+        stages = updates.setdefault("stages", {})
+        for stage_id in stage_ids:
+            stages.setdefault(int(stage_id), {})["enforce_eager"] = True
+    return cloned
 
 
 def allocate_device_chunk(
