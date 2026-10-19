@@ -498,3 +498,79 @@ steps:
           - >-
             tail -n 100 "$$STABLE_AUDIO_OFFLOAD_ARTIFACT_DIR/pytest.log" >
             "$$STABLE_AUDIO_OFFLOAD_ARTIFACT_DIR/pytest-summary.txt"
+
+
+  - group: ":full_moon: Wan2.2 Accuracy MI300 Nightly"
+    steps:
+      - label: "Wan2.2 I2V Accuracy 1 GPU"
+        agent_pool: mi300_1
+        mirror_hardwares: [amdproduction]
+        grade: NonBlocking
+        timeout_in_minutes: 180
+        env:
+          DIFFUSION_ATTENTION_BACKEND: TORCH_SDPA
+        artifact_paths:
+          - artifacts/rocm-wan22-accuracy-1gpu/**/*
+        commands:
+          - export ROCM_WAN22_ACCURACY_1GPU_ARTIFACT_DIR="$${BUILDKITE_BUILD_CHECKOUT_PATH:?}/artifacts/rocm-wan22-accuracy-1gpu"
+          - mkdir -p "$$ROCM_WAN22_ACCURACY_1GPU_ARTIFACT_DIR"
+          - |
+            pytest --collect-only -q tests/e2e/accuracy/wan22_i2v/test_wan22_i2v_video_similarity.py \
+              -m "full_model and diffusion and rocm and MI325 and cards_1" --run-level full_model \
+              > "$$ROCM_WAN22_ACCURACY_1GPU_ARTIFACT_DIR/collection.txt"
+            if ! grep -q '::' "$$ROCM_WAN22_ACCURACY_1GPU_ARTIFACT_DIR/collection.txt"; then
+              echo "No accuracy nodes collected for Wan2.2 I2V Accuracy 1 GPU" >&2
+              cat "$$ROCM_WAN22_ACCURACY_1GPU_ARTIFACT_DIR/collection.txt" >&2
+              exit 5
+            fi
+          - |
+            set +e
+            timeout --signal=TERM --kill-after=2m 165m \
+              pytest -s -v tests/e2e/accuracy/wan22_i2v/test_wan22_i2v_video_similarity.py \
+              -m "full_model and diffusion and rocm and MI325 and cards_1" --run-level full_model \
+              --junitxml="$$ROCM_WAN22_ACCURACY_1GPU_ARTIFACT_DIR/pytest.xml" \
+              2>&1 | tee "$$ROCM_WAN22_ACCURACY_1GPU_ARTIFACT_DIR/pytest.log"
+            status=$${PIPESTATUS[0]}
+            set -e
+            if [[ -d tests/e2e/accuracy/artifacts ]]; then
+              mkdir -p "$$ROCM_WAN22_ACCURACY_1GPU_ARTIFACT_DIR/accuracy"
+              cp -a tests/e2e/accuracy/artifacts/. "$$ROCM_WAN22_ACCURACY_1GPU_ARTIFACT_DIR/accuracy/"
+            fi
+
+            exit "$$status"
+      - label: "Wan2.2 I2V Accuracy 2 GPU"
+        agent_pool: mi300_2
+        mirror_hardwares: [amdproduction]
+        grade: NonBlocking
+        timeout_in_minutes: 180
+        env:
+          DIFFUSION_ATTENTION_BACKEND: TORCH_SDPA
+        artifact_paths:
+          - artifacts/rocm-wan22-accuracy-2gpu/**/*
+        commands:
+          - export ROCM_WAN22_ACCURACY_2GPU_ARTIFACT_DIR="$${BUILDKITE_BUILD_CHECKOUT_PATH:?}/artifacts/rocm-wan22-accuracy-2gpu"
+          - mkdir -p "$$ROCM_WAN22_ACCURACY_2GPU_ARTIFACT_DIR"
+          - |
+            pytest --collect-only -q tests/e2e/accuracy/wan22_i2v/test_wan22_i2v_video_similarity.py \
+              -m "full_model and diffusion and rocm and MI325 and cards_2" --run-level full_model \
+              > "$$ROCM_WAN22_ACCURACY_2GPU_ARTIFACT_DIR/collection.txt"
+            if ! grep -q '::' "$$ROCM_WAN22_ACCURACY_2GPU_ARTIFACT_DIR/collection.txt"; then
+              echo "No accuracy nodes collected for Wan2.2 I2V Accuracy 2 GPU" >&2
+              cat "$$ROCM_WAN22_ACCURACY_2GPU_ARTIFACT_DIR/collection.txt" >&2
+              exit 5
+            fi
+          - |
+            set +e
+            timeout --signal=TERM --kill-after=2m 165m \
+              pytest -s -v tests/e2e/accuracy/wan22_i2v/test_wan22_i2v_video_similarity.py \
+              -m "full_model and diffusion and rocm and MI325 and cards_2" --run-level full_model \
+              --junitxml="$$ROCM_WAN22_ACCURACY_2GPU_ARTIFACT_DIR/pytest.xml" \
+              2>&1 | tee "$$ROCM_WAN22_ACCURACY_2GPU_ARTIFACT_DIR/pytest.log"
+            status=$${PIPESTATUS[0]}
+            set -e
+            if [[ -d tests/e2e/accuracy/artifacts ]]; then
+              mkdir -p "$$ROCM_WAN22_ACCURACY_2GPU_ARTIFACT_DIR/accuracy"
+              cp -a tests/e2e/accuracy/artifacts/. "$$ROCM_WAN22_ACCURACY_2GPU_ARTIFACT_DIR/accuracy/"
+            fi
+
+            exit "$$status"

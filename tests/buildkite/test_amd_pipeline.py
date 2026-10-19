@@ -1005,3 +1005,26 @@ def test_amd_runner_preserves_piped_failures_and_empty_collection() -> None:
     assert 'VLLM_CI_ALLOW_NO_TESTS:-0}" == "1"' in runner
     assert template.count('{% if step.grade and step.grade == "Blocking" %}') == 2
     assert template.count("soft_fail: true") == 2
+
+
+def test_wan22_accuracy_has_separate_nonblocking_card_jobs() -> None:
+    one = _find_step("Wan2.2 I2V Accuracy 1 GPU", AMD_NIGHTLY_PIPELINE)
+    two = _find_step("Wan2.2 I2V Accuracy 2 GPU", AMD_NIGHTLY_PIPELINE)
+    assert one["agent_pool"] == "mi300_1"
+    assert two["agent_pool"] == "mi300_2"
+    for step, marker in (
+        (one, "full_model and diffusion and rocm and MI325 and cards_1"),
+        (two, "full_model and diffusion and rocm and MI325 and cards_2"),
+    ):
+        assert step["grade"] == "NonBlocking"
+        assert step["timeout_in_minutes"] == 180
+        assert step["env"]["DIFFUSION_ATTENTION_BACKEND"] == "TORCH_SDPA"
+        commands = "\n".join(step["commands"])
+        assert marker in commands
+        assert "tests/e2e/accuracy/wan22_i2v/test_wan22_i2v_video_similarity.py" in commands
+        assert "test_diffusers_backend_similarity.py" not in commands
+        assert "--collect-only" in commands
+        assert "exit 5" in commands
+    for pipeline_path in (AMD_READY_PIPELINE, AMD_MERGE_PIPELINE):
+        text = pipeline_path.read_text(encoding="utf-8")
+        assert "Wan2.2 I2V Accuracy" not in text
