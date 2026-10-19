@@ -25,7 +25,7 @@ from vllm_omni.lora.request import LoRARequest
 pytestmark = [pytest.mark.full_model, pytest.mark.diffusion]
 
 
-@hardware_test(res={"cuda": ["H100", "B200"]}, num_cards=4)
+@hardware_test(res={"cuda": ["H100", "B200"], "rocm": "MI325"}, num_cards=4)
 def test_hunyuan_image3_dit_lora_generation(tmp_path: Path):
     model = "tencent/HunyuanImage-3.0-Instruct"
     config = json.loads(Path(hf_hub_download(model, "config.json")).read_text())
