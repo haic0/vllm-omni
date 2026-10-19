@@ -498,3 +498,43 @@ steps:
           - >-
             tail -n 100 "$$STABLE_AUDIO_OFFLOAD_ARTIFACT_DIR/pytest.log" >
             "$$STABLE_AUDIO_OFFLOAD_ARTIFACT_DIR/pytest-summary.txt"
+
+
+  - group: ":full_moon: HunyuanVideo-1.5 Accuracy MI300 Nightly"
+    steps:
+      - label: "HunyuanVideo-1.5 Video Similarity"
+        agent_pool: mi300_1
+        mirror_hardwares: [amdproduction]
+        grade: NonBlocking
+        timeout_in_minutes: 180
+        env:
+          DIFFUSION_ATTENTION_BACKEND: TORCH_SDPA
+        artifact_paths:
+          - artifacts/rocm-hunyuanvideo15-accuracy/**/*
+        commands:
+          - export ROCM_HUNYUANVIDEO15_ACCURACY_ARTIFACT_DIR="$${BUILDKITE_BUILD_CHECKOUT_PATH:?}/artifacts/rocm-hunyuanvideo15-accuracy"
+          - mkdir -p "$$ROCM_HUNYUANVIDEO15_ACCURACY_ARTIFACT_DIR"
+          - |
+            pytest --collect-only -q tests/e2e/accuracy/hunyuanvideo15_t2v/test_hunyuanvideo15_t2v_video_similarity.py tests/e2e/accuracy/hunyuanvideo15_i2v/test_hunyuanvideo15_i2v_video_similarity.py \
+              -m "full_model and diffusion and rocm and MI325 and cards_1" --run-level full_model \
+              > "$$ROCM_HUNYUANVIDEO15_ACCURACY_ARTIFACT_DIR/collection.txt"
+            if ! grep -q '::' "$$ROCM_HUNYUANVIDEO15_ACCURACY_ARTIFACT_DIR/collection.txt"; then
+              echo "No accuracy nodes collected for HunyuanVideo-1.5 Video Similarity" >&2
+              cat "$$ROCM_HUNYUANVIDEO15_ACCURACY_ARTIFACT_DIR/collection.txt" >&2
+              exit 5
+            fi
+          - |
+            set +e
+            timeout --signal=TERM --kill-after=2m 165m \
+              pytest -s -v tests/e2e/accuracy/hunyuanvideo15_t2v/test_hunyuanvideo15_t2v_video_similarity.py tests/e2e/accuracy/hunyuanvideo15_i2v/test_hunyuanvideo15_i2v_video_similarity.py \
+              -m "full_model and diffusion and rocm and MI325 and cards_1" --run-level full_model \
+              --junitxml="$$ROCM_HUNYUANVIDEO15_ACCURACY_ARTIFACT_DIR/pytest.xml" \
+              2>&1 | tee "$$ROCM_HUNYUANVIDEO15_ACCURACY_ARTIFACT_DIR/pytest.log"
+            status=$${PIPESTATUS[0]}
+            set -e
+            if [[ -d tests/e2e/accuracy/artifacts ]]; then
+              mkdir -p "$$ROCM_HUNYUANVIDEO15_ACCURACY_ARTIFACT_DIR/accuracy"
+              cp -a tests/e2e/accuracy/artifacts/. "$$ROCM_HUNYUANVIDEO15_ACCURACY_ARTIFACT_DIR/accuracy/"
+            fi
+
+            exit "$$status"
