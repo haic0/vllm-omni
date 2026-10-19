@@ -1005,3 +1005,23 @@ def test_amd_runner_preserves_piped_failures_and_empty_collection() -> None:
     assert 'VLLM_CI_ALLOW_NO_TESTS:-0}" == "1"' in runner
     assert template.count('{% if step.grade and step.grade == "Blocking" %}') == 2
     assert template.count("soft_fail: true") == 2
+
+
+def test_qwen_image_diffusers_accuracy_is_one_nonblocking_nightly_job() -> None:
+    step = _find_step("Qwen-Image Diffusers Accuracy", AMD_NIGHTLY_PIPELINE)
+    assert step["grade"] == "NonBlocking"
+    assert step["agent_pool"] == "mi300_1"
+    assert step["mirror_hardwares"] == ["amdproduction"]
+    assert step["timeout_in_minutes"] == 180
+    commands = "\n".join(step["commands"])
+    assert "full_model and diffusion and rocm and MI325 and cards_1" in commands
+    assert "--run-level full_model" in commands
+    assert "--collect-only" in commands
+    assert "exit 5" in commands
+    assert "pytest.xml" in commands
+    assert step["env"]["DIFFUSION_ATTENTION_BACKEND"] == "TORCH_SDPA"
+    assert "tests/e2e/accuracy/test_qwen_image.py" in commands
+    assert "test_diffusers_backend_similarity.py" not in commands
+    for pipeline_path in (AMD_READY_PIPELINE, AMD_MERGE_PIPELINE):
+        text = pipeline_path.read_text(encoding="utf-8")
+        assert "Qwen-Image Diffusers Accuracy" not in text
