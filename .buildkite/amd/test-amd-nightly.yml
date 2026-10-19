@@ -680,3 +680,78 @@ steps:
             fi
 
             exit "$$status"
+
+  - group: ":full_moon: MiniMax-H3 Accuracy MI300 Nightly"
+    steps:
+      - label: "MiniMax-H3 Timeline Guide Accuracy"
+        agent_pool: mi300_2
+        mirror_hardwares: [amdproduction]
+        grade: NonBlocking
+        timeout_in_minutes: 180
+        env:
+          DIFFUSION_ATTENTION_BACKEND: TORCH_SDPA
+        artifact_paths:
+          - artifacts/rocm-minimax-h3-timeline/**/*
+        commands:
+          - export ROCM_MINIMAX_H3_TIMELINE_ARTIFACT_DIR="$${BUILDKITE_BUILD_CHECKOUT_PATH:?}/artifacts/rocm-minimax-h3-timeline"
+          - mkdir -p "$$ROCM_MINIMAX_H3_TIMELINE_ARTIFACT_DIR"
+          - |
+            pytest --collect-only -q tests/e2e/accuracy/minimax_h3/test_minimax_h3_timeline_guides.py \
+              -m "full_model and diffusion and rocm and MI325 and cards_2" --run-level full_model \
+              > "$$ROCM_MINIMAX_H3_TIMELINE_ARTIFACT_DIR/collection.txt"
+            if ! grep -q '::' "$$ROCM_MINIMAX_H3_TIMELINE_ARTIFACT_DIR/collection.txt"; then
+              echo "No accuracy nodes collected for MiniMax-H3 Timeline Guide Accuracy" >&2
+              cat "$$ROCM_MINIMAX_H3_TIMELINE_ARTIFACT_DIR/collection.txt" >&2
+              exit 5
+            fi
+          - |
+            set +e
+            timeout --signal=TERM --kill-after=2m 165m \
+              pytest -s -v tests/e2e/accuracy/minimax_h3/test_minimax_h3_timeline_guides.py \
+              -m "full_model and diffusion and rocm and MI325 and cards_2" --run-level full_model \
+              --junitxml="$$ROCM_MINIMAX_H3_TIMELINE_ARTIFACT_DIR/pytest.xml" \
+              2>&1 | tee "$$ROCM_MINIMAX_H3_TIMELINE_ARTIFACT_DIR/pytest.log"
+            status=$${PIPESTATUS[0]}
+            set -e
+            if [[ -d tests/e2e/accuracy/artifacts ]]; then
+              mkdir -p "$$ROCM_MINIMAX_H3_TIMELINE_ARTIFACT_DIR/accuracy"
+              cp -a tests/e2e/accuracy/artifacts/. "$$ROCM_MINIMAX_H3_TIMELINE_ARTIFACT_DIR/accuracy/"
+            fi
+
+            exit "$$status"
+      - label: "MiniMax-H3 I2VA Ref2VA Accuracy"
+        agent_pool: mi300_4
+        mirror_hardwares: [amdproduction]
+        grade: NonBlocking
+        timeout_in_minutes: 180
+        env:
+          DIFFUSION_ATTENTION_BACKEND: TORCH_SDPA
+        artifact_paths:
+          - artifacts/rocm-minimax-h3-i2va/**/*
+        commands:
+          - export ROCM_MINIMAX_H3_I2VA_ARTIFACT_DIR="$${BUILDKITE_BUILD_CHECKOUT_PATH:?}/artifacts/rocm-minimax-h3-i2va"
+          - mkdir -p "$$ROCM_MINIMAX_H3_I2VA_ARTIFACT_DIR"
+          - |
+            pytest --collect-only -q tests/e2e/accuracy/minimax_h3/test_minimax_h3_i2va_ref2va_similarity.py \
+              -m "full_model and diffusion and rocm and MI325 and cards_4" --run-level full_model \
+              > "$$ROCM_MINIMAX_H3_I2VA_ARTIFACT_DIR/collection.txt"
+            if ! grep -q '::' "$$ROCM_MINIMAX_H3_I2VA_ARTIFACT_DIR/collection.txt"; then
+              echo "No accuracy nodes collected for MiniMax-H3 I2VA Ref2VA Accuracy" >&2
+              cat "$$ROCM_MINIMAX_H3_I2VA_ARTIFACT_DIR/collection.txt" >&2
+              exit 5
+            fi
+          - |
+            set +e
+            timeout --signal=TERM --kill-after=2m 165m \
+              pytest -s -v tests/e2e/accuracy/minimax_h3/test_minimax_h3_i2va_ref2va_similarity.py \
+              -m "full_model and diffusion and rocm and MI325 and cards_4" --run-level full_model \
+              --junitxml="$$ROCM_MINIMAX_H3_I2VA_ARTIFACT_DIR/pytest.xml" \
+              2>&1 | tee "$$ROCM_MINIMAX_H3_I2VA_ARTIFACT_DIR/pytest.log"
+            status=$${PIPESTATUS[0]}
+            set -e
+            if [[ -d tests/e2e/accuracy/artifacts ]]; then
+              mkdir -p "$$ROCM_MINIMAX_H3_I2VA_ARTIFACT_DIR/accuracy"
+              cp -a tests/e2e/accuracy/artifacts/. "$$ROCM_MINIMAX_H3_I2VA_ARTIFACT_DIR/accuracy/"
+            fi
+
+            exit "$$status"

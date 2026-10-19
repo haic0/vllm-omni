@@ -1129,3 +1129,35 @@ def test_hunyuanvideo15_accuracy_is_one_nonblocking_nightly_job() -> None:
     for pipeline_path in (AMD_READY_PIPELINE, AMD_MERGE_PIPELINE):
         text = pipeline_path.read_text(encoding="utf-8")
         assert "HunyuanVideo-1.5 Video Similarity" not in text
+
+
+def test_minimax_h3_accuracy_has_two_nonblocking_nightly_jobs() -> None:
+    timeline = _find_step("MiniMax-H3 Timeline Guide Accuracy", AMD_NIGHTLY_PIPELINE)
+    i2va = _find_step("MiniMax-H3 I2VA Ref2VA Accuracy", AMD_NIGHTLY_PIPELINE)
+    assert timeline["agent_pool"] == "mi300_2"
+    assert i2va["agent_pool"] == "mi300_4"
+    pairs = (
+        (
+            timeline,
+            "full_model and diffusion and rocm and MI325 and cards_2",
+            "tests/e2e/accuracy/minimax_h3/test_minimax_h3_timeline_guides.py",
+        ),
+        (
+            i2va,
+            "full_model and diffusion and rocm and MI325 and cards_4",
+            "tests/e2e/accuracy/minimax_h3/test_minimax_h3_i2va_ref2va_similarity.py",
+        ),
+    )
+    for step, marker, path in pairs:
+        assert step["grade"] == "NonBlocking"
+        assert step["timeout_in_minutes"] == 180
+        assert step["env"]["DIFFUSION_ATTENTION_BACKEND"] == "TORCH_SDPA"
+        commands = "\n".join(step["commands"])
+        assert marker in commands
+        assert path in commands
+        assert "--collect-only" in commands
+        assert "exit 5" in commands
+    for pipeline_path in (AMD_READY_PIPELINE, AMD_MERGE_PIPELINE):
+        text = pipeline_path.read_text(encoding="utf-8")
+        assert "MiniMax-H3 Timeline Guide Accuracy" not in text
+        assert "MiniMax-H3 I2VA Ref2VA Accuracy" not in text
