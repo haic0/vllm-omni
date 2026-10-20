@@ -1007,24 +1007,70 @@ def test_amd_runner_preserves_piped_failures_and_empty_collection() -> None:
     assert template.count("soft_fail: true") == 2
 
 
+WAN22_SIMILARITY = "tests/e2e/accuracy/wan22_i2v/test_wan22_i2v_video_similarity.py"
+WAN22_2GPU_NODES = (
+    f"{WAN22_SIMILARITY}::test_wan22_i2v_diffusers_offline_generates_video",
+    f"{WAN22_SIMILARITY}::test_wan22_i2v_online_serving_generates_video",
+    f"{WAN22_SIMILARITY}::test_wan22_i2v_serving_matches_diffusers_video_similarity",
+)
+
+
 def test_wan22_accuracy_has_separate_nonblocking_card_jobs() -> None:
     one = _find_step("Wan2.2 I2V Accuracy 1 GPU", AMD_NIGHTLY_PIPELINE)
     two = _find_step("Wan2.2 I2V Accuracy 2 GPU", AMD_NIGHTLY_PIPELINE)
     assert one["agent_pool"] == "mi300_1"
     assert two["agent_pool"] == "mi300_2"
-    for step, marker in (
-        (one, "full_model and diffusion and rocm and MI325 and cards_1"),
-        (two, "full_model and diffusion and rocm and MI325 and cards_2"),
-    ):
-        assert step["grade"] == "NonBlocking"
-        assert step["timeout_in_minutes"] == 180
-        assert step["env"]["DIFFUSION_ATTENTION_BACKEND"] == "TORCH_SDPA"
-        commands = "\n".join(step["commands"])
-        assert marker in commands
-        assert "tests/e2e/accuracy/wan22_i2v/test_wan22_i2v_video_similarity.py" in commands
-        assert "test_diffusers_backend_similarity.py" not in commands
-        assert "--collect-only" in commands
-        assert "exit 5" in commands
+    one_commands = "\n".join(one["commands"])
+    two_commands = "\n".join(two["commands"])
+    assert one["grade"] == "NonBlocking"
+    assert two["grade"] == "NonBlocking"
+    assert one["timeout_in_minutes"] == 180
+    assert two["timeout_in_minutes"] == 180
+    assert one["env"]["DIFFUSION_ATTENTION_BACKEND"] == "TORCH_SDPA"
+    assert two["env"]["DIFFUSION_ATTENTION_BACKEND"] == "TORCH_SDPA"
+    assert "full_model and diffusion and rocm and MI325 and cards_1" in one_commands
+    assert "test_wan22_i2v_serving_matches_diffusers_video_similarity" not in one_commands
+    two_marker = "full_model and diffusion and rocm and MI325 and (cards_1 or cards_2)"
+    assert two_marker in two_commands
+    assert 'and cards_2"' not in two_commands
+    pytest_command = two_commands[two_commands.index("pytest -s -v") :]
+    offsets = [pytest_command.index(node) for node in WAN22_2GPU_NODES]
+    assert offsets == sorted(offsets)
+    assert two_commands.count(WAN22_2GPU_NODES[0]) == 2
+    assert "tests/e2e/accuracy/wan22_i2v/result" in two_commands
+    assert "test_diffusers_backend_similarity.py" not in two_commands
+    assert "--collect-only" in two_commands
+    assert "exit 5" in two_commands
+    similarity = Path(WAN22_SIMILARITY).read_text(encoding="utf-8")
+    assert "require_similarity_artifacts" in similarity
+    assert "similarity.json" in similarity
+    assert "Missing offline artifacts" not in similarity
     for pipeline_path in (AMD_READY_PIPELINE, AMD_MERGE_PIPELINE):
         text = pipeline_path.read_text(encoding="utf-8")
         assert "Wan2.2 I2V Accuracy" not in text
+
+
+def test_wan22_similarity_fails_when_offline_baseline_is_removed(tmp_path: Path) -> None:
+    from tests.e2e.accuracy.wan22_i2v.prerequisite import require_similarity_artifacts
+
+    online = tmp_path / "online.mp4"
+    online.write_bytes(b"online")
+    with pytest.raises(AssertionError, match="offline.mp4"):
+        require_similarity_artifacts(
+            [
+                online,
+                tmp_path / "offline.mp4",
+                tmp_path / "offline_metadata.json",
+            ]
+        )
+
+
+def test_wan22_similarity_accepts_complete_artifacts(tmp_path: Path) -> None:
+    from tests.e2e.accuracy.wan22_i2v.prerequisite import require_similarity_artifacts
+
+    paths = []
+    for name in ("online.mp4", "offline.mp4", "offline_metadata.json"):
+        path = tmp_path / name
+        path.write_bytes(b"x")
+        paths.append(path)
+    require_similarity_artifacts(paths)
