@@ -114,22 +114,23 @@ MIN_TOKENS_ENV = "VLLM_OMNI_FUSED_QK_NORM_ROPE_MIN_TOKENS"
 
 
 def _nvidia_cuda_available() -> bool:
-    """True only on NVIDIA CUDA.
+    """True only where the fused QK-norm RoPE CUDA kernel can run."""
+    return bool(torch.cuda.is_available() and torch.version.hip is None and current_platform.is_cuda())
 
-    ROCm exposes HIP through ``torch.cuda`` and ``torch.version.hip``, but
-    ``fused_qk_norm_rope_available`` requires ``current_platform.is_cuda()``.
-    """
-    return bool(
-        torch.cuda.is_available()
-        and getattr(torch.version, "hip", None) is None
-        and current_platform.is_cuda()
-        and not current_platform.is_rocm()
-    )
+
+def _rocm_available() -> bool:
+    """True on a ROCm platform with an available HIP-backed GPU."""
+    return bool(torch.cuda.is_available() and torch.version.hip is not None and current_platform.is_rocm())
 
 
 _REQUIRES_NVIDIA_CUDA = pytest.mark.skipif(
     not _nvidia_cuda_available(),
     reason="NVIDIA CUDA fused QK-norm RoPE kernel",
+)
+
+_REQUIRES_ROCM = pytest.mark.skipif(
+    not _rocm_available(),
+    reason="ROCm GPU required",
 )
 
 
@@ -175,7 +176,7 @@ def test_qwen_image_qk_norm_rope_cuda_fp16_fallback_matches_reference():
 
 
 @hardware_test(res={"cuda": "L4"}, num_cards=1)
-@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA required")
+@_REQUIRES_NVIDIA_CUDA
 @pytest.mark.parametrize("seq_len", [1, 7, 257, 1024])
 @pytest.mark.parametrize("packed_qkv_view", [False, True])
 def test_qwen_image_fused_qk_norm_rope_cuda_matches_fp32_rope_reference(
@@ -198,7 +199,7 @@ def test_qwen_image_fused_qk_norm_rope_cuda_matches_fp32_rope_reference(
 
 
 @hardware_test(res={"cuda": "L4"}, num_cards=1)
-@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA required")
+@_REQUIRES_NVIDIA_CUDA
 def test_qwen_image_fused_qk_norm_rope_torch_compile_fullgraph_capture(force_always_fuse):
     data = _make_input(
         seq_len=257,
@@ -232,7 +233,7 @@ def test_qwen_image_fused_qk_norm_rope_torch_compile_fullgraph_capture(force_alw
 
 
 @hardware_test(res={"cuda": "L4"}, num_cards=1)
-@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA required")
+@_REQUIRES_NVIDIA_CUDA
 def test_qwen_image_short_seq_default_gate_uses_eager_path(monkeypatch):
     """Below _FUSED_MIN_TOKENS the helper must stay on the eager chain (#7780)."""
     monkeypatch.delenv(MIN_TOKENS_ENV, raising=False)
@@ -253,7 +254,7 @@ def test_qwen_image_short_seq_default_gate_uses_eager_path(monkeypatch):
 
 
 @hardware_test(res={"cuda": "L4"}, num_cards=1)
-@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA required")
+@_REQUIRES_NVIDIA_CUDA
 def test_qwen_image_above_gate_uses_fused_path(monkeypatch):
     monkeypatch.delenv(MIN_TOKENS_ENV, raising=False)
     # BATCH*seq_len = 2*1024 = 2048 == _FUSED_MIN_TOKENS → fuse
@@ -339,7 +340,7 @@ def test_packed_table_skipped_when_fused_path_unavailable(force_always_fuse):
         assert table is not None and table.dtype == torch.float32  # same dtype as the per-stream table
         expected = torch.cat((torch.cat((txt, vid)).real, torch.cat((txt, vid)).imag), dim=-1)
         assert torch.equal(table, expected)  # text first, as the eager cat
-    elif current_platform.is_rocm() and torch.cuda.is_available():
+    elif _rocm_available():
         vid, txt = vid.cuda(), txt.cuda()
         assert _packed_qk_norm_rope_table(vid, txt, 1, torch.bfloat16) is None
 
@@ -400,7 +401,7 @@ def test_min_tokens_env_zero_forces_both_paths(monkeypatch):
     assert _packed_qk_norm_rope_table(vid, txt, 1, torch.bfloat16).shape == (80, HEAD_DIM)
 
 
-@pytest.mark.skipif(not current_platform.is_rocm(), reason="ROCm fused-path fallback")
+@_REQUIRES_ROCM
 def test_packed_table_is_none_on_rocm(force_always_fuse):
     """The token gate is open, but ROCm has no fused CUDA kernel."""
     from vllm_omni.diffusion.models.qwen_image.qwen_image_transformer import _packed_qk_norm_rope_table
