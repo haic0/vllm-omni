@@ -137,6 +137,11 @@ def _server_args() -> list[str]:
         "--use-hsdp",
         "--hsdp-shard-size",
         "4",
+        # Avoid four independent full-checkpoint loads in the shared pod: rank 0
+        # loads once and broadcasts the weights to the other HSDP ranks. Keep the
+        # rank-0 reads sequential to bound transient host-memory pressure too.
+        "--enable-broadcast-weight-load",
+        "--disable-multithread-weight-load",
         "--text-encoder-tp-size",
         "4",
         "--vae-patch-parallel-size",
