@@ -126,6 +126,7 @@ class _Internal:
 
 
 _CANCEL_EVENTS = frozenset({"input.cancel", "response.cancel", "barge_in", "output_audio_buffer.clear"})
+_INPUT_ARRIVAL_GRACE_S = 0.005
 
 
 def compute_silence_continuation_deadline(
@@ -137,21 +138,19 @@ def compute_silence_continuation_deadline(
 ) -> tuple[float, float]:
     """Return the silence continuation schedule ``(delay_s, next_silence_deadline)``.
 
-    The first continuation anchors to the latest accepted append's submission
-    time (``last_submit + chunk_period_s``), falling back to ``now`` when no
-    submission exists. Later continuations advance from the current deadline
-    instead of from ``now``, so pipeline processing time does not accumulate
-    as timer drift. When the schedule is more than one period overdue it is
-    stale: one continuation submits immediately and the schedule restarts
-    from ``now`` (``next_silence_deadline = now + chunk_period_s``) instead of
-    firing a burst of catch-ups.
+    The first continuation allows up to 5 ms for WebSocket/IPC input at the next frame boundary.
 
-    ``delay_s`` is the wait before this continuation and
-    ``next_silence_deadline`` the deadline for the following one.
+    Later deadlines keep the original period. Without a prior submission, the first deadline anchors to now.
+
+    A schedule more than one period overdue restarts from now instead of firing a burst of catch-ups.
+
+    ``delay_s`` is the wait; ``next_silence_deadline`` is the following frame's deadline.
     """
     if current_deadline is None:
         base = last_submit if last_submit is not None else now
         deadline = base + chunk_period_s
+        if last_submit is not None:
+            deadline += min(_INPUT_ARRIVAL_GRACE_S, chunk_period_s)
     else:
         deadline = current_deadline
     if now - deadline > chunk_period_s:
@@ -182,6 +181,7 @@ class DuplexSessionRunner:
         self.model_state: DuplexModelSessionState = session.model_state
         self.tasks = DuplexSessionTasks()
         self._mailbox: asyncio.Queue[DuplexCommand | StageOutput | _Internal] = asyncio.Queue()
+        self._pending_audio_appends = 0
         self._worker: asyncio.Task[None] | None = None
         self._worker_stopped = False
         self._loop: asyncio.AbstractEventLoop | None = None
@@ -236,6 +236,8 @@ class DuplexSessionRunner:
         self.emit({"type": "session.created", "session": session.as_public_dict()})
 
     def submit(self, command: DuplexCommand) -> None:
+        if isinstance(command, AppendAudio):
+            self._pending_audio_appends += 1
         self._mailbox.put_nowait(command)
 
     def on_stage_output(
@@ -462,6 +464,9 @@ class DuplexSessionRunner:
             except Exception as exc:
                 logger.exception("Duplex session %s failed handling %r: %s", self.session.session_id, item, exc)
                 self._emit_error("internal_error", str(exc))
+            finally:
+                if isinstance(item, AppendAudio):
+                    self._pending_audio_appends -= 1
 
     async def _stop_worker(self) -> None:
         worker = self._worker
@@ -1073,7 +1078,11 @@ class DuplexSessionRunner:
 
     def _real_input_waiting(self) -> bool:
         self._clear_completed_pending_silence()
-        return self.model_state.audio_buffer.has_pending() or self.model_state.audio_buffer.has_reserved()
+        return (
+            self._pending_audio_appends > 0
+            or self.model_state.audio_buffer.has_pending()
+            or self.model_state.audio_buffer.has_reserved()
+        )
 
     async def _start_append(
         self,
