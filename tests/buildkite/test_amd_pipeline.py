@@ -1017,6 +1017,15 @@ def test_qwen_image_diffusers_accuracy_is_one_nonblocking_nightly_job() -> None:
     assert "full_model and diffusion and rocm and MI325 and cards_1" in commands
     assert "--run-level full_model" in commands
     assert "--collect-only" in commands
+    nodes = (
+        "tests/e2e/accuracy/test_qwen_image.py::test_qwen_image_matches_diffusers",
+        "tests/e2e/accuracy/test_qwen_image.py::test_qwen_image_2512_matches_diffusers_pixelwise",
+    )
+    pytest_command = commands[commands.index("pytest -s -v") :]
+    offsets = [pytest_command.index(node) for node in nodes]
+    assert offsets == sorted(offsets)
+    assert all(commands.count(node) == 2 for node in nodes)
+    assert "Expected exactly two Qwen-Image accuracy nodes" in commands
     assert "exit 5" in commands
     assert "pytest.xml" in commands
     assert step["env"]["DIFFUSION_ATTENTION_BACKEND"] == "TORCH_SDPA"

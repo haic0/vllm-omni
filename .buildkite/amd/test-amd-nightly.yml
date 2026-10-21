@@ -515,18 +515,32 @@ steps:
           - export ROCM_QWEN_IMAGE_ACCURACY_ARTIFACT_DIR="$${BUILDKITE_BUILD_CHECKOUT_PATH:?}/artifacts/rocm-qwen-image-accuracy"
           - mkdir -p "$$ROCM_QWEN_IMAGE_ACCURACY_ARTIFACT_DIR"
           - |
-            pytest --collect-only -q tests/e2e/accuracy/test_qwen_image.py \
+            nodes=(
+              "tests/e2e/accuracy/test_qwen_image.py::test_qwen_image_matches_diffusers"
+              "tests/e2e/accuracy/test_qwen_image.py::test_qwen_image_2512_matches_diffusers_pixelwise"
+            )
+            pytest --collect-only -q "$${nodes[@]}" \
               -m "full_model and diffusion and rocm and MI325 and cards_1" --run-level full_model \
               > "$$ROCM_QWEN_IMAGE_ACCURACY_ARTIFACT_DIR/collection.txt"
-            if ! grep -q '::' "$$ROCM_QWEN_IMAGE_ACCURACY_ARTIFACT_DIR/collection.txt"; then
-              echo "No accuracy nodes collected for Qwen-Image Diffusers Accuracy" >&2
+            for node in "$${nodes[@]}"; do
+              if ! grep -Fq "$$node" "$$ROCM_QWEN_IMAGE_ACCURACY_ARTIFACT_DIR/collection.txt"; then
+                echo "Qwen-Image accuracy node was not collected: $$node" >&2
+                cat "$$ROCM_QWEN_IMAGE_ACCURACY_ARTIFACT_DIR/collection.txt" >&2
+                exit 5
+              fi
+            done
+            collected_count=$$(grep -c '::' "$$ROCM_QWEN_IMAGE_ACCURACY_ARTIFACT_DIR/collection.txt" || true)
+            if [[ "$$collected_count" != 2 ]]; then
+              echo "Expected exactly two Qwen-Image accuracy nodes, found $$collected_count." >&2
               cat "$$ROCM_QWEN_IMAGE_ACCURACY_ARTIFACT_DIR/collection.txt" >&2
               exit 5
             fi
           - |
             set +e
             timeout --signal=TERM --kill-after=2m 165m \
-              pytest -s -v tests/e2e/accuracy/test_qwen_image.py \
+              pytest -s -v \
+              "tests/e2e/accuracy/test_qwen_image.py::test_qwen_image_matches_diffusers" \
+              "tests/e2e/accuracy/test_qwen_image.py::test_qwen_image_2512_matches_diffusers_pixelwise" \
               -m "full_model and diffusion and rocm and MI325 and cards_1" --run-level full_model \
               --junitxml="$$ROCM_QWEN_IMAGE_ACCURACY_ARTIFACT_DIR/pytest.xml" \
               2>&1 | tee "$$ROCM_QWEN_IMAGE_ACCURACY_ARTIFACT_DIR/pytest.log"
