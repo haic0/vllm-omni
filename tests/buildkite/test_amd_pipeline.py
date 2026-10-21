@@ -1162,6 +1162,10 @@ def test_minimax_h3_accuracy_has_two_nonblocking_nightly_jobs() -> None:
     assert "Expected exactly one MiniMax-H3 timeline accuracy node" in timeline_commands
     i2va_commands = "\n".join(i2va["commands"])
     assert i2va["env"]["VLLM_OMNI_MINIMAX_H3_DIAG"] == "1"
+    assert i2va["env"]["VLLM_OMNI_MINIMAX_H3_FFMPEG_TIMEOUT"] == "180"
+    assert "VLLM_OMNI_MINIMAX_H3_DIAG_DIR" in i2va_commands
+    assert "ffmpeg -hide_banner -version" in i2va_commands
+    assert "/sys/fs/cgroup/cpu.stat" in i2va_commands
     assert "test_minimax_h3_i2va_matches_official_reference" not in i2va_commands
     assert "test_minimax_h3_ref2va_matches_official_reference" in i2va_commands
     assert "Expected exactly one MiniMax-H3 Ref2VA diagnostic node" in i2va_commands

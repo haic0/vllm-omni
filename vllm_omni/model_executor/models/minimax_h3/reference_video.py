@@ -8,6 +8,7 @@ import json
 import math
 import os
 import subprocess
+import time
 from pathlib import Path
 from typing import Any
 
@@ -85,6 +86,165 @@ MINIMAX_H3_VIDEO_FORMATS = frozenset({"mp4", "mov"})
 MINIMAX_H3_VIDEO_CODECS = frozenset({"h264", "h265", "hevc"})
 MINIMAX_H3_AUDIO_FORMATS = frozenset({"wav", "mp3"})
 MINIMAX_H3_AUDIO_CODECS = frozenset({"aac", "mp3"})
+MINIMAX_H3_DIAGNOSTIC_ENV = "VLLM_OMNI_MINIMAX_H3_DIAG"
+MINIMAX_H3_DIAGNOSTIC_DIR_ENV = "VLLM_OMNI_MINIMAX_H3_DIAG_DIR"
+MINIMAX_H3_DIAGNOSTIC_FFMPEG_TIMEOUT_ENV = "VLLM_OMNI_MINIMAX_H3_FFMPEG_TIMEOUT"
+
+
+def _diagnostic_enabled() -> bool:
+    return os.environ.get(MINIMAX_H3_DIAGNOSTIC_ENV) == "1"
+
+
+def _diagnostic_stage(stage: str, started_at: float | None = None, **details: Any) -> float:
+    """Emit opt-in subprocess evidence for a stuck reference-video request."""
+    now = time.monotonic()
+    if not _diagnostic_enabled():
+        return now
+    rank = (
+        torch.distributed.get_rank() if torch.distributed.is_available() and torch.distributed.is_initialized() else -1
+    )
+    fields = [f"rank={rank}", f"pid={os.getpid()}", f"stage={stage}"]
+    if started_at is not None:
+        fields.append(f"elapsed_s={now - started_at:.3f}")
+    fields.extend(f"{name}={value}" for name, value in sorted(details.items()))
+    print(f"[MiniMaxH3Diag] {' '.join(fields)}", flush=True)
+    return now
+
+
+def _run_ffprobe(command: list[str], *, path: str, probe_kind: str) -> subprocess.CompletedProcess[str]:
+    if not _diagnostic_enabled():
+        return subprocess.run(command, check=True, capture_output=True, text=True)
+
+    started_at = _diagnostic_stage(
+        "ffprobe.begin",
+        path=path,
+        probe_kind=probe_kind,
+        source_bytes=os.path.getsize(path),
+    )
+    try:
+        result = subprocess.run(command, check=True, capture_output=True, text=True, timeout=120)
+    except subprocess.TimeoutExpired:
+        _diagnostic_stage("ffprobe.timeout", started_at, path=path, probe_kind=probe_kind)
+        raise
+    _diagnostic_stage(
+        "ffprobe.end",
+        started_at,
+        path=path,
+        probe_kind=probe_kind,
+        stdout_bytes=len(result.stdout),
+    )
+    return result
+
+
+def _read_diagnostic_file(path: Path, *, tail_lines: int = 12) -> str:
+    try:
+        lines = path.read_text(errors="replace").splitlines()
+    except OSError as exc:
+        return f"unavailable:{type(exc).__name__}"
+    return "|".join(lines[-tail_lines:]) or "empty"
+
+
+def _ffmpeg_process_state(pid: int) -> str:
+    selected: list[str] = []
+    try:
+        status = Path(f"/proc/{pid}/status").read_text(errors="replace").splitlines()
+        wanted = {
+            "State",
+            "Threads",
+            "VmRSS",
+            "voluntary_ctxt_switches",
+            "nonvoluntary_ctxt_switches",
+        }
+        selected.extend(line.replace("\t", " ") for line in status if line.partition(":")[0] in wanted)
+    except OSError as exc:
+        selected.append(f"status=unavailable:{type(exc).__name__}")
+    try:
+        selected.append(f"wchan={Path(f'/proc/{pid}/wchan').read_text(errors='replace').strip()}")
+    except OSError as exc:
+        selected.append(f"wchan=unavailable:{type(exc).__name__}")
+    try:
+        io_lines = Path(f"/proc/{pid}/io").read_text(errors="replace").splitlines()
+        selected.extend(
+            line.replace(" ", "")
+            for line in io_lines
+            if line.partition(":")[0] in {"rchar", "wchar", "read_bytes", "write_bytes"}
+        )
+    except OSError as exc:
+        selected.append(f"io=unavailable:{type(exc).__name__}")
+    return "|".join(selected)
+
+
+def _run_diagnostic_ffmpeg(command: list[str], *, output: str, workdir: str) -> None:
+    diagnostic_dir = Path(os.environ.get(MINIMAX_H3_DIAGNOSTIC_DIR_ENV, workdir))
+    diagnostic_dir.mkdir(parents=True, exist_ok=True)
+    progress_path = diagnostic_dir / "ffmpeg-progress.txt"
+    stderr_path = diagnostic_dir / "ffmpeg-stderr.txt"
+    diagnostic_command = [
+        *command[:4],
+        "-stats_period",
+        "5",
+        "-progress",
+        str(progress_path),
+        *command[4:],
+    ]
+    timeout_seconds = float(os.environ.get(MINIMAX_H3_DIAGNOSTIC_FFMPEG_TIMEOUT_ENV, "180"))
+    started_at = time.monotonic()
+    with stderr_path.open("w") as stderr_file:
+        process = subprocess.Popen(
+            diagnostic_command,
+            stdout=subprocess.DEVNULL,
+            stderr=stderr_file,
+            text=True,
+        )
+        _diagnostic_stage(
+            "ffmpeg.spawn",
+            started_at,
+            child_pid=process.pid,
+            command=" ".join(diagnostic_command),
+            timeout_s=timeout_seconds,
+        )
+        while process.poll() is None:
+            elapsed = time.monotonic() - started_at
+            _diagnostic_stage(
+                "ffmpeg.progress",
+                started_at,
+                child_pid=process.pid,
+                output_bytes=Path(output).stat().st_size if Path(output).exists() else 0,
+                process_state=_ffmpeg_process_state(process.pid),
+                progress=_read_diagnostic_file(progress_path),
+            )
+            if elapsed >= timeout_seconds:
+                _diagnostic_stage(
+                    "ffmpeg.timeout",
+                    started_at,
+                    child_pid=process.pid,
+                    output_bytes=Path(output).stat().st_size if Path(output).exists() else 0,
+                    process_state=_ffmpeg_process_state(process.pid),
+                    progress=_read_diagnostic_file(progress_path),
+                    stderr=_read_diagnostic_file(stderr_path),
+                )
+                process.terminate()
+                try:
+                    process.wait(timeout=10)
+                except subprocess.TimeoutExpired:
+                    process.kill()
+                    process.wait(timeout=10)
+                raise subprocess.TimeoutExpired(diagnostic_command, timeout_seconds)
+            time.sleep(10)
+
+    returncode = process.returncode
+    assert returncode is not None
+    _diagnostic_stage(
+        "ffmpeg.end",
+        started_at,
+        child_pid=process.pid,
+        output_bytes=Path(output).stat().st_size if Path(output).exists() else 0,
+        progress=_read_diagnostic_file(progress_path),
+        returncode=returncode,
+        stderr=_read_diagnostic_file(stderr_path),
+    )
+    if returncode:
+        raise subprocess.CalledProcessError(returncode, diagnostic_command)
 
 
 def _nearest_multiple(value: float, multiple: int) -> int:
@@ -97,7 +257,7 @@ def _probe_video(path: str) -> dict[str, Any]:
         "sample_aspect_ratio:format=format_name,size,duration"
     )
     command = ["ffprobe", "-v", "error", "-show_entries", show_entries, "-of", "json", path]
-    result = subprocess.run(command, check=True, capture_output=True, text=True)
+    result = _run_ffprobe(command, path=path, probe_kind="metadata")
     probe = json.loads(result.stdout)
     streams = probe.get("streams") or []
     video_streams = [stream for stream in streams if stream.get("codec_type") == "video"]
@@ -106,11 +266,10 @@ def _probe_video(path: str) -> dict[str, Any]:
     stream = video_streams[0]
     raw_count = stream.get("nb_read_frames") or stream.get("nb_frames")
     if raw_count in (None, "", "N/A"):
-        result = subprocess.run(
+        result = _run_ffprobe(
             ["ffprobe", "-v", "error", "-count_frames", *command[3:]],
-            check=True,
-            capture_output=True,
-            text=True,
+            path=path,
+            probe_kind="count_frames",
         )
         probe = json.loads(result.stdout)
         streams = probe.get("streams") or []
@@ -345,41 +504,42 @@ def _transcode_reference_video(
         # requested target; longer inputs are deterministically trimmed by the
         # same -frames:v limit without enabling this padding filter.
         filters.append("tpad=stop_mode=clone:stop=-1")
-    subprocess.run(
-        [
-            "ffmpeg",
-            "-y",
-            "-loglevel",
-            "error",
-            "-ss",
-            f"{float(start_time_seconds):.6f}",
-            "-i",
-            source,
-            "-map",
-            "0:v:0",
-            "-an",
-            "-vf",
-            ",".join(filters),
-            *duration_args,
-            *frame_count_args,
-            "-metadata:s:v:0",
-            "rotate=0",
-            # Keep the transformed RGB pixels lossless. The same prepared
-            # stream is decoded by Qwen3VL and the video VAE; a yuv420p
-            # intermediate would make the two consumers see different
-            # pixels from the model-card reference recipe.
-            "-c:v",
-            "libx264rgb",
-            "-crf",
-            "0",
-            "-preset",
-            "veryfast",
-            "-pix_fmt",
-            "rgb24",
-            output,
-        ],
-        check=True,
-    )
+    command = [
+        "ffmpeg",
+        "-y",
+        "-loglevel",
+        "error",
+        "-ss",
+        f"{float(start_time_seconds):.6f}",
+        "-i",
+        source,
+        "-map",
+        "0:v:0",
+        "-an",
+        "-vf",
+        ",".join(filters),
+        *duration_args,
+        *frame_count_args,
+        "-metadata:s:v:0",
+        "rotate=0",
+        # Keep the transformed RGB pixels lossless. The same prepared
+        # stream is decoded by Qwen3VL and the video VAE; a yuv420p
+        # intermediate would make the two consumers see different
+        # pixels from the model-card reference recipe.
+        "-c:v",
+        "libx264rgb",
+        "-crf",
+        "0",
+        "-preset",
+        "veryfast",
+        "-pix_fmt",
+        "rgb24",
+        output,
+    ]
+    if _diagnostic_enabled():
+        _run_diagnostic_ffmpeg(command, output=output, workdir=workdir)
+    else:
+        subprocess.run(command, check=True)
     return output
 
 

@@ -731,11 +731,32 @@ steps:
         env:
           DIFFUSION_ATTENTION_BACKEND: TORCH_SDPA
           VLLM_OMNI_MINIMAX_H3_DIAG: "1"
+          VLLM_OMNI_MINIMAX_H3_FFMPEG_TIMEOUT: "180"
         artifact_paths:
           - artifacts/rocm-minimax-h3-i2va/**/*
         commands:
           - export ROCM_MINIMAX_H3_I2VA_ARTIFACT_DIR="$${BUILDKITE_BUILD_CHECKOUT_PATH:?}/artifacts/rocm-minimax-h3-i2va"
           - mkdir -p "$$ROCM_MINIMAX_H3_I2VA_ARTIFACT_DIR"
+          - export VLLM_OMNI_MINIMAX_H3_DIAG_DIR="$$ROCM_MINIMAX_H3_I2VA_ARTIFACT_DIR/media-subprocess"
+          - mkdir -p "$$VLLM_OMNI_MINIMAX_H3_DIAG_DIR"
+          - |
+            echo "--- MiniMax-H3 media subprocess environment"
+            ffmpeg -hide_banner -version | head -n 3
+            ffprobe -hide_banner -version | head -n 3
+            df -h /tmp
+            df -i /tmp
+            if [[ -r /sys/fs/cgroup/cpu.max ]]; then
+              echo "cpu.max=$$(cat /sys/fs/cgroup/cpu.max)"
+            fi
+            if [[ -r /sys/fs/cgroup/cpu.stat ]]; then
+              sed 's/^/cpu.stat: /' /sys/fs/cgroup/cpu.stat
+            fi
+            if [[ -r /sys/fs/cgroup/memory.current ]]; then
+              echo "memory.current=$$(cat /sys/fs/cgroup/memory.current)"
+            fi
+            if [[ -r /sys/fs/cgroup/pids.current ]]; then
+              echo "pids.current=$$(cat /sys/fs/cgroup/pids.current)"
+            fi
           - |
             # Temporary PR #9128 isolation: retain the passed I2VA result from
             # AMD build #14329 and collect only the stalled Ref2VA node.
