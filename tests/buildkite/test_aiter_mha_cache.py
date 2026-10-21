@@ -255,31 +255,58 @@ def test_same_pr_artifact_cannot_cross_head_base_or_pr_identity(tmp_path: Path) 
     )
 
 
-def test_main_artifact_requires_the_exact_trusted_commit(tmp_path: Path) -> None:
+def test_main_artifact_accepts_exact_trusted_or_abi_compatible_commit(tmp_path: Path) -> None:
     identity = _identity()
     job_dir = tmp_path / "job"
     job_dir.mkdir()
     _write_module(job_dir / cache.module_filename(), b"main-module")
-    main_env = _env(
+    trusted = "7" * 40
+    recent = "a" * 40
+    exact_env = _env(
         BUILDKITE_BUILD_ID="build-main",
         BUILDKITE_BUILD_NUMBER="13999",
-        BUILDKITE_COMMIT=BASE,
+        BUILDKITE_COMMIT=trusted,
         BUILDKITE_BRANCH="main",
         BUILDKITE_PULL_REQUEST="false",
-        VLLM_OMNI_AITER_MHA_TRUSTED_COMMIT="7" * 40,
+        VLLM_OMNI_AITER_MHA_TRUSTED_COMMIT="9" * 40,
     )
-    provenance = cache.provenance_from_env(identity, main_env, checkout=BASE)
-    assert provenance is not None
-    published = cache.stage_publication(job_dir, tmp_path / "stage", identity, provenance)
-    assert published is not None
-    source = cache.BuildSource("build-main", 13999, BASE, "main", "", False)
+    exact_provenance = cache.provenance_from_env(identity, exact_env, checkout=trusted)
+    assert exact_provenance is not None
+    exact_published = cache.stage_publication(job_dir, tmp_path / "exact", identity, exact_provenance)
+    assert exact_published is not None
+    exact_source = cache.BuildSource("build-main", 13999, trusted, "main", "", False)
+    consumer = _env(VLLM_OMNI_AITER_MHA_TRUSTED_COMMIT=trusted)
 
-    assert cache.provenance_matches_source(published, source, identity, _env())
+    assert cache.provenance_matches_source(exact_published, exact_source, identity, consumer)
+
+    recent_env = _env(
+        BUILDKITE_BUILD_ID="build-recent",
+        BUILDKITE_BUILD_NUMBER="14010",
+        BUILDKITE_COMMIT=recent,
+        BUILDKITE_BRANCH="main",
+        BUILDKITE_PULL_REQUEST="false",
+        VLLM_OMNI_AITER_MHA_TRUSTED_COMMIT="9" * 40,
+    )
+    recent_provenance = cache.provenance_from_env(identity, recent_env, checkout=recent)
+    assert recent_provenance is not None
+    _write_module(job_dir / cache.module_filename(), b"recent-module")
+    recent_published = cache.stage_publication(job_dir, tmp_path / "recent", identity, recent_provenance)
+    assert recent_published is not None
+    recent_source = cache.BuildSource("build-recent", 14010, recent, "main", "", False)
+
+    # ABI identity is the compatibility gate; the Omni merge-base need not match.
+    assert cache.provenance_matches_source(recent_published, recent_source, identity, consumer)
     assert not cache.provenance_matches_source(
-        published,
-        source,
+        recent_published,
+        recent_source,
         identity,
-        _env(VLLM_OMNI_AITER_MHA_TRUSTED_COMMIT="8" * 40),
+        _env(VLLM_OMNI_AITER_MHA_TRUSTED_COMMIT="not-a-sha"),
+    )
+    assert not cache.provenance_matches_source(
+        recent_published,
+        cache.BuildSource("build-pr", 14011, recent, "main", "99", False),
+        identity,
+        consumer,
     )
 
 
@@ -350,11 +377,17 @@ def test_release_line_candidate_sources_query_release_line_then_main() -> None:
         fetch=fetch,
     )
 
-    def _index(branch: str, commit: str) -> int:
+    def _exact_index(branch: str, commit: str) -> int:
         needle_branch = f"branch={branch.replace('/', '%2F')}"
         return next(i for i, url in enumerate(requested) if needle_branch in url and f"commit={commit}" in url)
 
-    assert _index("release/v0.30.0", trusted) < _index("main", trusted)
+    def _recent_index(branch: str) -> int:
+        needle_branch = f"branch={branch.replace('/', '%2F')}"
+        return next(i for i, url in enumerate(requested) if needle_branch in url and "commit=" not in url)
+
+    assert _exact_index("release/v0.30.0", trusted) < _exact_index("main", trusted)
+    assert _exact_index("main", trusted) < _recent_index("release/v0.30.0")
+    assert _recent_index("release/v0.30.0") < _recent_index("main")
 
 
 def test_release_line_pull_request_trusts_only_main() -> None:
@@ -376,7 +409,11 @@ def test_release_line_pull_request_trusts_only_main() -> None:
     )
 
     assert any("branch=main" in url and f"commit={trusted}" in url for url in requested)
+    assert any("branch=main" in url and "commit=" not in url for url in requested)
+    # Same-PR exact-checkout may still query the release-line head branch;
+    # trusted and recent fallbacks must not.
     assert not any("branch=release%2Fv0.30.0" in url and f"commit={trusted}" in url for url in requested)
+    assert not any("branch=release%2Fv0.30.0" in url and "commit=" not in url for url in requested)
 
 
 def test_discovery_uses_server_metadata_and_excludes_the_current_build() -> None:
@@ -413,6 +450,40 @@ def test_discovery_uses_server_metadata_and_excludes_the_current_build() -> None
             True,
         )
     ]
+
+
+def test_discover_recent_branch_sources_skips_prs_and_current_build() -> None:
+    recent = "a" * 40
+    listing = (
+        '<a href="/vllm/vllm-omni-amd-ci/builds/14021">current</a>'
+        '<a href="/vllm/vllm-omni-amd-ci/builds/14020">pr</a>'
+        '<a href="/vllm/vllm-omni-amd-ci/builds/14019">main</a>'
+    )
+
+    def fetch(url: str) -> str:
+        if "?" in url:
+            assert "branch=main" in url
+            assert "commit=" not in url
+            return listing
+        if url.endswith("/14021.json"):
+            return json.dumps(_details(build_id="current", number=14021, commit=recent, branch="main", pull_request=""))
+        if url.endswith("/14020.json"):
+            return json.dumps(
+                _details(build_id="build-pr", number=14020, commit=HEAD, branch="main", pull_request="99")
+            )
+        if url.endswith("/14019.json"):
+            return json.dumps(
+                _details(build_id="build-main", number=14019, commit=recent, branch="main", pull_request="")
+            )
+        raise AssertionError(url)
+
+    sources = cache.discover_recent_branch_sources(
+        branch="main",
+        current_build_id="current",
+        fetch=fetch,
+    )
+
+    assert sources == [cache.BuildSource("build-main", 14019, recent, "main", "", False)]
 
 
 def test_candidate_sources_queries_the_pr_head_not_the_test_merge_commit() -> None:
