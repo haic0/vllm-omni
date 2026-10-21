@@ -1071,6 +1071,7 @@ def test_wan22_similarity_accepts_complete_artifacts(tmp_path: Path) -> None:
         paths.append(path)
     require_similarity_artifacts(paths)
 
+
 def test_hunyuanvideo15_accuracy_is_one_nonblocking_nightly_job() -> None:
     step = _find_step("HunyuanVideo-1.5 Video Similarity", AMD_NIGHTLY_PIPELINE)
     assert step["grade"] == "NonBlocking"
