@@ -730,41 +730,36 @@ steps:
         timeout_in_minutes: 180
         env:
           DIFFUSION_ATTENTION_BACKEND: TORCH_SDPA
+          VLLM_OMNI_MINIMAX_H3_DIAG: "1"
         artifact_paths:
           - artifacts/rocm-minimax-h3-i2va/**/*
         commands:
           - export ROCM_MINIMAX_H3_I2VA_ARTIFACT_DIR="$${BUILDKITE_BUILD_CHECKOUT_PATH:?}/artifacts/rocm-minimax-h3-i2va"
           - mkdir -p "$$ROCM_MINIMAX_H3_I2VA_ARTIFACT_DIR"
           - |
-            nodes=(
-              "tests/e2e/accuracy/minimax_h3/test_minimax_h3_i2va_ref2va_similarity.py::test_minimax_h3_i2va_matches_official_reference"
-              "tests/e2e/accuracy/minimax_h3/test_minimax_h3_i2va_ref2va_similarity.py::test_minimax_h3_ref2va_matches_official_reference"
-            )
-            pytest --collect-only -q "$${nodes[@]}" \
+            # Temporary PR #9128 isolation: retain the passed I2VA result from
+            # AMD build #14329 and collect only the stalled Ref2VA node.
+            node="tests/e2e/accuracy/minimax_h3/test_minimax_h3_i2va_ref2va_similarity.py::test_minimax_h3_ref2va_matches_official_reference"
+            pytest --collect-only -q "$$node" \
               -m "full_model and diffusion and rocm and MI325 and cards_4" --run-level full_model \
               > "$$ROCM_MINIMAX_H3_I2VA_ARTIFACT_DIR/collection.txt"
             count=$$(awk '/::/ { n++ } END { print n + 0 }' \
               "$$ROCM_MINIMAX_H3_I2VA_ARTIFACT_DIR/collection.txt")
-            if [[ "$$count" != "$${#nodes[@]}" ]]; then
-              echo "Expected exactly $${#nodes[@]} MiniMax-H3 I2VA/Ref2VA nodes, found $$count." >&2
+            if [[ "$$count" != 1 ]]; then
+              echo "Expected exactly one MiniMax-H3 Ref2VA diagnostic node, found $$count." >&2
               cat "$$ROCM_MINIMAX_H3_I2VA_ARTIFACT_DIR/collection.txt" >&2
               exit 5
             fi
-            for node in "$${nodes[@]}"; do
-              if ! grep -Fq "$$node" "$$ROCM_MINIMAX_H3_I2VA_ARTIFACT_DIR/collection.txt"; then
-                echo "MiniMax-H3 accuracy node was not collected: $$node" >&2
-                cat "$$ROCM_MINIMAX_H3_I2VA_ARTIFACT_DIR/collection.txt" >&2
-                exit 5
-              fi
-            done
+            if ! grep -Fq "$$node" "$$ROCM_MINIMAX_H3_I2VA_ARTIFACT_DIR/collection.txt"; then
+              echo "MiniMax-H3 Ref2VA diagnostic node was not collected: $$node" >&2
+              cat "$$ROCM_MINIMAX_H3_I2VA_ARTIFACT_DIR/collection.txt" >&2
+              exit 5
+            fi
           - |
             set +e
-            nodes=(
-              "tests/e2e/accuracy/minimax_h3/test_minimax_h3_i2va_ref2va_similarity.py::test_minimax_h3_i2va_matches_official_reference"
-              "tests/e2e/accuracy/minimax_h3/test_minimax_h3_i2va_ref2va_similarity.py::test_minimax_h3_ref2va_matches_official_reference"
-            )
-            timeout --signal=TERM --kill-after=2m 165m \
-              pytest -s -v "$${nodes[@]}" \
+            node="tests/e2e/accuracy/minimax_h3/test_minimax_h3_i2va_ref2va_similarity.py::test_minimax_h3_ref2va_matches_official_reference"
+            timeout --signal=TERM --kill-after=2m 90m \
+              pytest -s -vv "$$node" \
               -m "full_model and diffusion and rocm and MI325 and cards_4" --run-level full_model \
               --junitxml="$$ROCM_MINIMAX_H3_I2VA_ARTIFACT_DIR/pytest.xml" \
               2>&1 | tee "$$ROCM_MINIMAX_H3_I2VA_ARTIFACT_DIR/pytest.log"
