@@ -3472,6 +3472,27 @@ def test_keyframe_encode_cpu_keeps_cudnn_settings(monkeypatch):
             assert not cudnn.allow_tf32
 
 
+def test_keyframe_encode_rocm_does_not_require_deterministic_miopen(monkeypatch):
+    from vllm_omni.diffusion.models.minimax_h3.vae import (
+        _minimax_h3_keyframe_encode_context,
+    )
+    from vllm_omni.platforms import current_omni_platform
+
+    monkeypatch.setattr(current_omni_platform, "is_cuda", lambda: False)
+    cudnn = torch.backends.cudnn
+    with cudnn.flags(enabled=False, benchmark=True, deterministic=True, allow_tf32=False):
+        with _minimax_h3_keyframe_encode_context(torch.device("cuda:0")):
+            assert cudnn.enabled
+            assert not cudnn.benchmark
+            assert not cudnn.deterministic
+            assert cudnn.allow_tf32
+
+        assert not cudnn.enabled
+        assert cudnn.benchmark
+        assert cudnn.deterministic
+        assert not cudnn.allow_tf32
+
+
 def _peer_rank_preencode_pipeline(monkeypatch):
     """An H3 pipeline whose video VAE is a distributed rank that owns no output.
 
