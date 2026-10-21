@@ -1019,6 +1019,8 @@ def test_hunyuan_image3_lora_accuracy_is_one_nonblocking_nightly_job() -> None:
     assert "--collect-only" in commands
     assert "exit 5" in commands
     assert "pytest.xml" in commands
+    assert "test_hunyuan_image3_lora.py::test_hunyuan_image3_dit_lora_generation" in commands
+    assert "Expected exactly one HunyuanImage3 LoRA accuracy node" in commands
     assert step["env"]["DIFFUSION_ATTENTION_BACKEND"] == "TORCH_SDPA"
     assert step["env"]["HUNYUAN_IMAGE3_DEVICES"] == "0,1,2,3"
     assert "test_hunyuan_image3_lora.py" in commands
