@@ -10,6 +10,7 @@ import torch
 from omegaconf import DictConfig
 from torch import nn
 from vllm.config import CompilationConfig, CUDAGraphMode, DeviceConfig, ModelConfig, ParallelConfig, VllmConfig
+from vllm.utils import torch_utils
 from vllm.v1.worker.encoder_cudagraph import EncoderCudaGraphManager
 
 from tests.helpers.mark import hardware_test
@@ -107,7 +108,7 @@ def test_graph_returned_state_is_private_across_replays(perception, monkeypatch)
     graph.manager = _CPUManager(graph.adapter)
     graph._fallback_reasons = Counter()
     graph.stream = object()
-    monkeypatch.setattr(graphs, "current_stream", lambda: graph.stream)
+    monkeypatch.setattr(torch.cuda, "current_stream", lambda device=None: graph.stream)
     with torch.inference_mode():
         first = graph.run(torch.ones(1, 2, 1), _caches(), 0)
         snapshot = tuple(value.clone() for value in first)
@@ -118,7 +119,7 @@ def test_graph_returned_state_is_private_across_replays(perception, monkeypatch)
         assert all(torch.equal(a, b) for a, b in zip(steady, expected))
     assert graph.manager.calls == 3
     assert graph.get_cumulative_stats()["ineligible_misses"] == 0
-    monkeypatch.setattr(graphs, "current_stream", object)
+    monkeypatch.setattr(torch.cuda, "current_stream", lambda device=None: object())
     with torch.inference_mode():
         graph.run(torch.ones(1, 2, 1), _caches(), 0)
     stats = graph.get_cumulative_stats()
@@ -149,7 +150,9 @@ def test_runtime_ineligible_frame_stays_eager(perception, monkeypatch, reason):
     graph.manager = _CPUManager(graph.adapter)
     graph._fallback_reasons = Counter()
     graph.stream = object()
-    monkeypatch.setattr(graphs, "current_stream", lambda: object() if reason == "stream" else graph.stream)
+    monkeypatch.setattr(
+        torch.cuda, "current_stream", lambda device=None: object() if reason == "stream" else graph.stream
+    )
     monkeypatch.setattr(torch, "is_autocast_enabled", lambda device: reason == "autocast")
     mel = torch.ones(1, 2, 2 if reason == "phase" else 1)
     caches = _caches()
@@ -287,8 +290,9 @@ def test_weight_loading_activates_graph_with_actual_streaming_phases(monkeypatch
 
 
 @hardware_test(res={"cuda": "L4"}, num_cards=1)
+@pytest.mark.nvidia_only
 @torch.inference_mode()
-def test_cuda_manager_replays_interleaved_sessions_exactly():
+def test_cuda_manager_replays_interleaved_sessions_exactly(monkeypatch):
     with torch.random.fork_rng(devices=[]):
         torch.manual_seed(42)
         perception = _small_perception().to("cuda")
@@ -298,8 +302,13 @@ def test_cuda_manager_replays_interleaved_sessions_exactly():
         mel = torch.zeros(1, 8, 8 * (index + 1) + 1)
         chunk, drop = thinker_module.slice_perception_streaming_mel(mel, index, streaming)
         phases.append((chunk.shape[-1], drop))
+    replay_stream = torch.cuda.current_stream()
+    # Reproduce weight loading before vLLM has cached a stream on this thread.
+    monkeypatch.setattr(torch_utils._current_stream_tls, "value", None, raising=False)
     graph = graphs.make_perception_graph(perception, _config("cuda"), tuple(phases))
     assert graph is not None
+    assert torch.cuda.current_stream() == replay_stream
+    assert graph.stream == replay_stream
     assert graph.manager.path_token_budgets == {"default": [0, 1], "steady": [0, 1]}
     states = [perception.encoder.get_initial_cache_state(1, torch.float32, torch.device("cuda")) for _ in range(2)]
     references = [tuple(value.clone() for value in caches) for caches in states]
@@ -312,6 +321,7 @@ def test_cuda_manager_replays_interleaved_sessions_exactly():
         for row in (0, 1) if index % 2 else (1, 0):
             mel = torch.randn(1, 8, width, generator=generator, device="cuda")
             actual = graph.run(mel, states[row], drop)
+            assert torch.cuda.current_stream() == replay_stream
             expected = graphs.perception_step(perception, mel, references[row], drop)
             for result, reference in zip(actual, expected):
                 assert torch.equal(result, reference)

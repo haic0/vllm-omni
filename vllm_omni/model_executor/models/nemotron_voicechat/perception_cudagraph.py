@@ -12,7 +12,6 @@ from vllm.config import CUDAGraphMode, VllmConfig
 from vllm.config.multimodal import MultiModalConfig
 from vllm.logger import init_logger
 from vllm.model_executor.models.interfaces import SupportsEncoderCudaGraph
-from vllm.utils.torch_utils import current_stream
 from vllm.v1.worker.encoder_cudagraph import EncoderCudaGraphManager
 from vllm.v1.worker.encoder_cudagraph_defs import (
     EncoderCudaGraphCaptureInputs,
@@ -162,8 +161,13 @@ class PerceptionCudaGraph:
         config.model_config = copy(config.model_config)
         config.model_config.multimodal_config = MultiModalConfig(limit_per_prompt={"audio": 1, "video": 0})
         self.manager = EncoderCudaGraphManager(config, self.device, self.dtype, self.adapter)
-        self.stream = current_stream()
-        self.manager.capture(graph_pool=None)
+        self.stream = torch.cuda.current_stream(self.device)
+        # Capture must not change the stream used by the rest of the worker.
+        capture_stream = torch.cuda.Stream(device=self.device)
+        capture_stream.wait_stream(self.stream)
+        with torch.cuda.stream(capture_stream):
+            self.manager.capture(graph_pool=None)
+        self.stream.wait_stream(capture_stream)
 
     def _ineligible_reason(self, mel: torch.Tensor, caches: Cache, drop: int) -> str | None:
         if torch.is_grad_enabled():
@@ -184,7 +188,7 @@ class PerceptionCudaGraph:
             (x.shape, x.dtype, x.device) != (y.shape, y.dtype, y.device) for x, y in zip(caches, self.adapter.caches)
         ):
             return "cache"
-        if current_stream() != self.stream:
+        if torch.cuda.current_stream(self.device) != self.stream:
             return "stream"
         return None
 
