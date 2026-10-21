@@ -1036,6 +1036,7 @@ def test_qwen_image_diffusers_accuracy_is_one_nonblocking_nightly_job() -> None:
         text = pipeline_path.read_text(encoding="utf-8")
         assert "Qwen-Image Diffusers Accuracy" not in text
 
+
 def test_hunyuanvideo15_accuracy_is_one_nonblocking_nightly_job() -> None:
     step = _find_step("HunyuanVideo-1.5 Video Similarity", AMD_NIGHTLY_PIPELINE)
     assert step["grade"] == "NonBlocking"
