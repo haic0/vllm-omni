@@ -34,7 +34,6 @@ from vllm_omni.config.stage_config import (
     PipelineConfig,
 )
 from vllm_omni.diffusion.models.pi0_pipeline_config import PI0_PIPELINE
-from vllm_omni.diffusion.models.pi05_pipeline_config import PI05_PIPELINE
 from vllm_omni.model_executor.models.audex.pipeline import (
     AUDEX_S2S_PIPELINE,
     AUDEX_THINKER_ONLY_PIPELINE,
@@ -50,6 +49,7 @@ from vllm_omni.model_executor.models.bagel.pipeline import (
     BAGEL_THINK_PIPELINE,
 )
 from vllm_omni.model_executor.models.breeze_tts_2.pipeline import BREEZE_TTS_2_PIPELINE
+from vllm_omni.model_executor.models.causvid_wan.pipeline import CAUSVID_WAN_PIPELINE
 from vllm_omni.model_executor.models.cosmos3.pipeline import (
     COSMOS3_OMNI_DEPLOY_PIPELINE,
     COSMOS3_POLICY_PIPELINE,
@@ -86,6 +86,7 @@ from vllm_omni.model_executor.models.mammoth_moda2.pipeline import (
     MAMMOTH_MODA2_PIPELINE,
 )
 from vllm_omni.model_executor.models.mimo_audio.pipeline import MIMO_AUDIO_PIPELINE
+from vllm_omni.model_executor.models.ming3_tts.pipeline import MING3_TTS_PIPELINE
 from vllm_omni.model_executor.models.ming_flash_omni.pipeline import (
     MING_FLASH_OMNI_IMAGE_PIPELINE,
     MING_FLASH_OMNI_PIPELINE,
@@ -124,6 +125,8 @@ from vllm_omni.model_executor.models.step_audio2.pipeline import (
     STEP_AUDIO2_ASR_PIPELINE,
     STEP_AUDIO2_PIPELINE,
 )
+from vllm_omni.model_executor.models.taomate_h3.pipeline import TAOMATE_H3_PIPELINE
+from vllm_omni.model_executor.models.vibevoice.pipeline import VIBEVOICE_PIPELINE
 from vllm_omni.model_executor.models.voxcpm2.pipeline import VOXCPM2_PIPELINE
 from vllm_omni.model_executor.models.voxtral_tts.pipeline import VOXTRAL_TTS_PIPELINE
 from vllm_omni.model_executor.models.wan2_2.pipeline import (
@@ -151,6 +154,7 @@ OMNI_PIPELINES: dict[str, PipelineConfig | PipelineResolverFunc] = {
     "bagel_single_stage": BAGEL_SINGLE_STAGE_PIPELINE,
     "bagel_think": BAGEL_THINK_PIPELINE,
     "breeze": BREEZE_TTS_2_PIPELINE,
+    "causvid_wan": CAUSVID_WAN_PIPELINE,
     # Cosmos3 policy / omni-deploy topologies share HF metadata with video
     # Cosmos3 checkpoints (which stay on the single-stage diffusion fallback),
     # so these entries are only reachable through a deploy yaml's ``pipeline:``
@@ -178,9 +182,12 @@ OMNI_PIPELINES: dict[str, PipelineConfig | PipelineResolverFunc] = {
     "joyai_vl_interaction_asr": JOYAI_VL_INTERACTION_ASR_PIPELINE,
     "lance": LANCE_PIPELINE,
     "lingbot_world": LINGBOT_WORLD_PIPELINE,
+    # Public Ming-3.0-tts-tiny still serializes the former config name.
+    "lingv3_tts": MING3_TTS_PIPELINE,
     "mammoth_moda2": MAMMOTH_MODA2_PIPELINE,
     "mammoth_moda2_ar": MAMMOTH_MODA2_AR_PIPELINE,
     "mimo_audio": MIMO_AUDIO_PIPELINE,
+    "ming3_tts": MING3_TTS_PIPELINE,
     "ming_flash_omni": MING_FLASH_OMNI_PIPELINE,
     "ming_flash_omni_image": MING_FLASH_OMNI_IMAGE_PIPELINE,
     "ming_flash_omni_thinker_only": MING_FLASH_OMNI_THINKER_ONLY_PIPELINE,
@@ -208,7 +215,6 @@ OMNI_PIPELINES: dict[str, PipelineConfig | PipelineResolverFunc] = {
     "omnivoice": OMNIVOICE_PIPELINE,
     "personaplex": PERSONAPLEX_PIPELINE,
     "pi0": PI0_PIPELINE,
-    "pi05": PI05_PIPELINE,
     "qwen2_5_omni": QWEN2_5_OMNI_PIPELINE,
     "qwen2_5_omni_thinker_only": QWEN2_5_OMNI_THINKER_ONLY_PIPELINE,
     "qwen3_omni_moe": resolve_qwen3_omni_pipeline,
@@ -217,6 +223,8 @@ OMNI_PIPELINES: dict[str, PipelineConfig | PipelineResolverFunc] = {
     "qwen3_tts_fused": QWEN3_TTS_FUSED_PIPELINE,
     "step_audio_2": STEP_AUDIO2_PIPELINE,
     "step_audio_2_asr": STEP_AUDIO2_ASR_PIPELINE,
+    "taomate_h3": TAOMATE_H3_PIPELINE,
+    "vibevoice": VIBEVOICE_PIPELINE,
     "voxcpm2": VOXCPM2_PIPELINE,
     "voxtral_tts": VOXTRAL_TTS_PIPELINE,
     "wan2_2": WAN2_2_PIPELINE,
