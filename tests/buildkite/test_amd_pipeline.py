@@ -1030,6 +1030,7 @@ def test_hunyuan_image3_lora_accuracy_is_one_nonblocking_nightly_job() -> None:
         text = pipeline_path.read_text(encoding="utf-8")
         assert "HunyuanImage3 LoRA Accuracy" not in text
 
+
 def test_hunyuanvideo15_accuracy_is_one_nonblocking_nightly_job() -> None:
     step = _find_step("HunyuanVideo-1.5 Video Similarity", AMD_NIGHTLY_PIPELINE)
     assert step["grade"] == "NonBlocking"
