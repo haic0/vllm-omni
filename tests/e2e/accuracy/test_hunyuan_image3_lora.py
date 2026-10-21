@@ -37,10 +37,7 @@ def _assert_repeatable(actual: np.ndarray, expected: np.ndarray, *, label: str) 
     abs_diff = np.abs(actual.astype(np.int16) - expected.astype(np.int16))
     mismatched_ratio = float(np.count_nonzero(abs_diff)) / abs_diff.size
     max_abs_diff = int(abs_diff.max())
-    print(
-        f"{label}: mismatched_ratio={mismatched_ratio:.6f}, "
-        f"max_abs_diff={max_abs_diff}"
-    )
+    print(f"{label}: mismatched_ratio={mismatched_ratio:.6f}, max_abs_diff={max_abs_diff}")
     assert mismatched_ratio <= ROCM_MAX_REPEAT_MISMATCH_RATIO
     assert max_abs_diff <= ROCM_MAX_REPEAT_ABS_DIFF
 
