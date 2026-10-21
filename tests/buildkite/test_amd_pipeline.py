@@ -1015,21 +1015,15 @@ WAN22_2GPU_NODES = (
 )
 
 
-def test_wan22_accuracy_has_separate_nonblocking_card_jobs() -> None:
-    one = _find_step("Wan2.2 I2V Accuracy 1 GPU", AMD_NIGHTLY_PIPELINE)
+def test_wan22_accuracy_has_one_nonblocking_comparison_job() -> None:
     two = _find_step("Wan2.2 I2V Accuracy 2 GPU", AMD_NIGHTLY_PIPELINE)
-    assert one["agent_pool"] == "mi300_1"
+    group = _find_group(":full_moon: Wan2.2 Accuracy MI300 Nightly", AMD_NIGHTLY_PIPELINE)
+    assert [step["label"] for step in group["steps"]] == ["Wan2.2 I2V Accuracy 2 GPU"]
     assert two["agent_pool"] == "mi300_2"
-    one_commands = "\n".join(one["commands"])
     two_commands = "\n".join(two["commands"])
-    assert one["grade"] == "NonBlocking"
     assert two["grade"] == "NonBlocking"
-    assert one["timeout_in_minutes"] == 180
     assert two["timeout_in_minutes"] == 180
-    assert one["env"]["DIFFUSION_ATTENTION_BACKEND"] == "TORCH_SDPA"
     assert two["env"]["DIFFUSION_ATTENTION_BACKEND"] == "TORCH_SDPA"
-    assert "full_model and diffusion and rocm and MI325 and cards_1" in one_commands
-    assert "test_wan22_i2v_serving_matches_diffusers_video_similarity" not in one_commands
     two_marker = "full_model and diffusion and rocm and MI325 and (cards_1 or cards_2)"
     assert two_marker in two_commands
     assert 'and cards_2"' not in two_commands
@@ -1040,6 +1034,7 @@ def test_wan22_accuracy_has_separate_nonblocking_card_jobs() -> None:
     assert "tests/e2e/accuracy/wan22_i2v/result" in two_commands
     assert "test_diffusers_backend_similarity.py" not in two_commands
     assert "--collect-only" in two_commands
+    assert "Expected exactly three Wan2.2 accuracy nodes" in two_commands
     assert "exit 5" in two_commands
     similarity = Path(WAN22_SIMILARITY).read_text(encoding="utf-8")
     assert "require_similarity_artifacts" in similarity
