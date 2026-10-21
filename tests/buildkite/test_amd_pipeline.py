@@ -1166,6 +1166,9 @@ def test_minimax_h3_accuracy_has_two_nonblocking_nightly_jobs() -> None:
     assert "VLLM_OMNI_MINIMAX_H3_DIAG_DIR" in i2va_commands
     assert "ffmpeg -hide_banner -version" in i2va_commands
     assert "/sys/fs/cgroup/cpu.stat" in i2va_commands
+    assert "diagnostic_watchdog" in i2va_commands
+    assert "/proc/$$pid/syscall" in i2va_commands
+    assert "external-watchdog.log" in i2va_commands
     assert "test_minimax_h3_i2va_matches_official_reference" not in i2va_commands
     assert "test_minimax_h3_ref2va_matches_official_reference" in i2va_commands
     assert "Expected exactly one MiniMax-H3 Ref2VA diagnostic node" in i2va_commands

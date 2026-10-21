@@ -743,6 +743,8 @@ steps:
             echo "--- MiniMax-H3 media subprocess environment"
             ffmpeg -hide_banner -version | head -n 3
             ffprobe -hide_banner -version | head -n 3
+            command -v timeout || true
+            command -v strace || true
             df -h /tmp
             df -i /tmp
             if [[ -r /sys/fs/cgroup/cpu.max ]]; then
@@ -777,6 +779,58 @@ steps:
               exit 5
             fi
           - |
+            diagnostic_watchdog() {
+              set +e
+              local diag_dir="$$VLLM_OMNI_MINIMAX_H3_DIAG_DIR"
+              local pid_file="$$diag_dir/ffmpeg.pid"
+              local output_file="$$diag_dir/ffmpeg-output-path.txt"
+              local watchdog_log="$$diag_dir/external-watchdog.log"
+              local deadline=$$((SECONDS + 240))
+              while (( SECONDS < deadline )); do
+                if [[ ! -s "$$pid_file" ]]; then
+                  echo "[MiniMaxH3Watchdog] waiting_for_pid elapsed_s=$$SECONDS" | tee -a "$$watchdog_log"
+                  sleep 5
+                  continue
+                fi
+                local pid
+                pid=$$(tr -dc '0-9' < "$$pid_file")
+                if [[ -z "$$pid" ]]; then
+                  echo "[MiniMaxH3Watchdog] invalid_pid_file" | tee -a "$$watchdog_log"
+                  sleep 5
+                  continue
+                fi
+                {
+                  echo "[MiniMaxH3Watchdog] snapshot epoch=$$(date +%s) pid=$$pid"
+                  timeout 2s ps -L -o pid,tid,ppid,stat,etime,time,pcpu,psr,wchan:32,comm -p "$$pid" || true
+                  timeout 2s readlink "/proc/$$pid/exe" || true
+                  timeout 2s sh -c "tr '\\0' ' ' < /proc/$$pid/cmdline; echo" || true
+                  for proc_file in syscall wchan status io stack limits; do
+                    echo "--- /proc/$$pid/$$proc_file"
+                    timeout 2s cat "/proc/$$pid/$$proc_file" || true
+                  done
+                  echo "--- process files"
+                  timeout 2s ls -l "/proc/$$pid/fd" || true
+                  if [[ -s "$$output_file" ]]; then
+                    local prepared_path
+                    prepared_path=$$(head -n 1 "$$output_file")
+                    stat -c 'prepared path=%n size=%s blocks=%b mode=%A' "$$prepared_path" 2>&1 || true
+                  fi
+                  stat -c 'progress path=%n size=%s blocks=%b mode=%A' "$$diag_dir/ffmpeg-progress.txt" 2>&1 || true
+                  tail -n 20 "$$diag_dir/ffmpeg-progress.txt" 2>/dev/null || true
+                  stat -c 'stderr path=%n size=%s blocks=%b mode=%A' "$$diag_dir/ffmpeg-stderr.txt" 2>&1 || true
+                  tail -n 20 "$$diag_dir/ffmpeg-stderr.txt" 2>/dev/null || true
+                } 2>&1 | tee -a "$$watchdog_log"
+                if ! kill -0 "$$pid" 2>/dev/null; then
+                  echo "[MiniMaxH3Watchdog] child_exited pid=$$pid" | tee -a "$$watchdog_log"
+                  return
+                fi
+                sleep 10
+              done
+              echo "[MiniMaxH3Watchdog] deadline_reached" | tee -a "$$watchdog_log"
+            }
+
+            diagnostic_watchdog &
+            watchdog_pid=$$!
             set +e
             node="tests/e2e/accuracy/minimax_h3/test_minimax_h3_i2va_ref2va_similarity.py::test_minimax_h3_ref2va_matches_official_reference"
             timeout --signal=TERM --kill-after=2m 90m \
@@ -785,6 +839,8 @@ steps:
               --junitxml="$$ROCM_MINIMAX_H3_I2VA_ARTIFACT_DIR/pytest.xml" \
               2>&1 | tee "$$ROCM_MINIMAX_H3_I2VA_ARTIFACT_DIR/pytest.log"
             status=$${PIPESTATUS[0]}
+            kill "$$watchdog_pid" 2>/dev/null || true
+            wait "$$watchdog_pid" 2>/dev/null || true
             set -e
             if [[ -d tests/e2e/accuracy/artifacts ]]; then
               mkdir -p "$$ROCM_MINIMAX_H3_I2VA_ARTIFACT_DIR/accuracy"

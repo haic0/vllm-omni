@@ -144,41 +144,13 @@ def _read_diagnostic_file(path: Path, *, tail_lines: int = 12) -> str:
     return "|".join(lines[-tail_lines:]) or "empty"
 
 
-def _ffmpeg_process_state(pid: int) -> str:
-    selected: list[str] = []
-    try:
-        status = Path(f"/proc/{pid}/status").read_text(errors="replace").splitlines()
-        wanted = {
-            "State",
-            "Threads",
-            "VmRSS",
-            "voluntary_ctxt_switches",
-            "nonvoluntary_ctxt_switches",
-        }
-        selected.extend(line.replace("\t", " ") for line in status if line.partition(":")[0] in wanted)
-    except OSError as exc:
-        selected.append(f"status=unavailable:{type(exc).__name__}")
-    try:
-        selected.append(f"wchan={Path(f'/proc/{pid}/wchan').read_text(errors='replace').strip()}")
-    except OSError as exc:
-        selected.append(f"wchan=unavailable:{type(exc).__name__}")
-    try:
-        io_lines = Path(f"/proc/{pid}/io").read_text(errors="replace").splitlines()
-        selected.extend(
-            line.replace(" ", "")
-            for line in io_lines
-            if line.partition(":")[0] in {"rchar", "wchar", "read_bytes", "write_bytes"}
-        )
-    except OSError as exc:
-        selected.append(f"io=unavailable:{type(exc).__name__}")
-    return "|".join(selected)
-
-
 def _run_diagnostic_ffmpeg(command: list[str], *, output: str, workdir: str) -> None:
     diagnostic_dir = Path(os.environ.get(MINIMAX_H3_DIAGNOSTIC_DIR_ENV, workdir))
     diagnostic_dir.mkdir(parents=True, exist_ok=True)
     progress_path = diagnostic_dir / "ffmpeg-progress.txt"
     stderr_path = diagnostic_dir / "ffmpeg-stderr.txt"
+    pid_path = diagnostic_dir / "ffmpeg.pid"
+    output_path = diagnostic_dir / "ffmpeg-output-path.txt"
     diagnostic_command = [
         *command[:4],
         "-stats_period",
@@ -196,6 +168,8 @@ def _run_diagnostic_ffmpeg(command: list[str], *, output: str, workdir: str) -> 
             stderr=stderr_file,
             text=True,
         )
+        pid_path.write_text(f"{process.pid}\n")
+        output_path.write_text(f"{output}\n")
         _diagnostic_stage(
             "ffmpeg.spawn",
             started_at,
@@ -203,34 +177,30 @@ def _run_diagnostic_ffmpeg(command: list[str], *, output: str, workdir: str) -> 
             command=" ".join(diagnostic_command),
             timeout_s=timeout_seconds,
         )
-        while process.poll() is None:
-            elapsed = time.monotonic() - started_at
+        try:
+            process.wait(timeout=timeout_seconds)
+        except subprocess.TimeoutExpired:
             _diagnostic_stage(
-                "ffmpeg.progress",
+                "ffmpeg.timeout",
                 started_at,
                 child_pid=process.pid,
                 output_bytes=Path(output).stat().st_size if Path(output).exists() else 0,
-                process_state=_ffmpeg_process_state(process.pid),
                 progress=_read_diagnostic_file(progress_path),
+                stderr=_read_diagnostic_file(stderr_path),
             )
-            if elapsed >= timeout_seconds:
+            process.kill()
+            try:
+                process.wait(timeout=10)
+            except subprocess.TimeoutExpired:
                 _diagnostic_stage(
-                    "ffmpeg.timeout",
+                    "ffmpeg.kill_timeout",
                     started_at,
                     child_pid=process.pid,
                     output_bytes=Path(output).stat().st_size if Path(output).exists() else 0,
-                    process_state=_ffmpeg_process_state(process.pid),
                     progress=_read_diagnostic_file(progress_path),
                     stderr=_read_diagnostic_file(stderr_path),
                 )
-                process.terminate()
-                try:
-                    process.wait(timeout=10)
-                except subprocess.TimeoutExpired:
-                    process.kill()
-                    process.wait(timeout=10)
-                raise subprocess.TimeoutExpired(diagnostic_command, timeout_seconds)
-            time.sleep(10)
+            raise
 
     returncode = process.returncode
     assert returncode is not None
