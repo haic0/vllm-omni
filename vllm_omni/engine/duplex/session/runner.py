@@ -181,6 +181,7 @@ class DuplexSessionRunner:
         self.model_state: DuplexModelSessionState = session.model_state
         self.tasks = DuplexSessionTasks()
         self._mailbox: asyncio.Queue[DuplexCommand | StageOutput | _Internal] = asyncio.Queue()
+        # Include audio being decoded before it reaches the model's PCM buffer.
         self._pending_audio_appends = 0
         self._worker: asyncio.Task[None] | None = None
         self._worker_stopped = False
@@ -1238,10 +1239,8 @@ class DuplexSessionRunner:
         # accepted between the snapshot and this continuation's submission
         # re-anchors the chain; _still_valid() then skips the stale unit.
         anchor = model_state.last_native_submit_monotonic
-        # Align the next silence unit to submission_time_N + chunk_period and
-        # sleep only the remaining budget. The deadline is stored by the
-        # acceptance callback when the append actually submits, so skipped or
-        # stale continuations never advance the clock.
+        # Keep the deadline cadence after the initial input-arrival grace.
+        # Acceptance commits the next deadline, so skipped continuations do not advance the clock.
         delay_s, next_silence_deadline = compute_silence_continuation_deadline(
             chunk_period_s=chunk_period_s,
             now=time.monotonic(),
