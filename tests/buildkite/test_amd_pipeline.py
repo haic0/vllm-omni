@@ -1023,6 +1023,17 @@ def test_hunyuanvideo15_accuracy_is_one_nonblocking_nightly_job() -> None:
     assert "hunyuanvideo15_t2v" in commands
     assert "hunyuanvideo15_i2v" in commands
     assert "test_hunyuanvideo15_t2v.py" not in commands
+    expected_nodes = (
+        "test_hunyuanvideo15_t2v_diffusers_offline_generates_video",
+        "test_hunyuanvideo15_t2v_online_serving_generates_video",
+        "test_hunyuanvideo15_t2v_serving_matches_offline_video_similarity",
+        "test_hunyuanvideo15_i2v_diffusers_offline_generates_video",
+        "test_hunyuanvideo15_i2v_online_serving_generates_video",
+        "test_hunyuanvideo15_i2v_serving_matches_offline_video_similarity",
+    )
+    for node in expected_nodes:
+        assert node in commands
+    assert "Expected exactly $${#nodes[@]} HunyuanVideo-1.5 accuracy nodes" in commands
     for pipeline_path in (AMD_READY_PIPELINE, AMD_MERGE_PIPELINE):
         text = pipeline_path.read_text(encoding="utf-8")
         assert "HunyuanVideo-1.5 Video Similarity" not in text
