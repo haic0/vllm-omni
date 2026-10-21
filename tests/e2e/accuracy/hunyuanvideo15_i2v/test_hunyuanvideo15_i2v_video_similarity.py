@@ -53,6 +53,9 @@ WORKSPACE_ROOT = REPO_ROOT.parent
 RUNNER_PATH = REPO_ROOT / "examples" / "offline_inference" / "image_to_video" / "image_to_video.py"
 RESULT_ROOT = Path(__file__).parent / "result"
 VIDEO_TIMEOUT_SECONDS = 60 * 60
+# A cold MI325 load can spend more than ten minutes reading the seven DiT
+# shards (AMD Buildkite #14270). Bound real hangs without failing that path.
+ENGINE_INIT_TIMEOUT_SECONDS = 30 * 60
 SERVER_CASES = [
     pytest.param(
         OmniServerParams(
@@ -64,6 +67,8 @@ SERVER_CASES = [
             ],
             env_dict={"VLLM_OMNI_STORAGE_PATH": str(RESULT_ROOT / "storage")},
             use_omni=True,
+            init_timeout=ENGINE_INIT_TIMEOUT_SECONDS,
+            stage_init_timeout=ENGINE_INIT_TIMEOUT_SECONDS,
         ),
         id="hunyuanvideo15_i2v_default",
     )
@@ -126,6 +131,10 @@ def _build_offline_command(*, image_source: str, output_path: Path) -> list[str]
         str(GUIDANCE_SCALE),
         "--flow-shift",
         str(FLOW_SHIFT),
+        "--init-timeout",
+        str(ENGINE_INIT_TIMEOUT_SECONDS),
+        "--stage-init-timeout",
+        str(ENGINE_INIT_TIMEOUT_SECONDS),
         "--fps",
         str(FPS),
         "--seed",
