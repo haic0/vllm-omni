@@ -1157,6 +1157,13 @@ def test_minimax_h3_accuracy_has_two_nonblocking_nightly_jobs() -> None:
         assert path in commands
         assert "--collect-only" in commands
         assert "exit 5" in commands
+    timeline_commands = "\n".join(timeline["commands"])
+    assert "test_minimax_h3_timeline_guides_condition_frames_and_audio" in timeline_commands
+    assert "Expected exactly one MiniMax-H3 timeline accuracy node" in timeline_commands
+    i2va_commands = "\n".join(i2va["commands"])
+    assert "test_minimax_h3_i2va_matches_official_reference" in i2va_commands
+    assert "test_minimax_h3_ref2va_matches_official_reference" in i2va_commands
+    assert "Expected exactly $${#nodes[@]} MiniMax-H3 I2VA/Ref2VA nodes" in i2va_commands
     for pipeline_path in (AMD_READY_PIPELINE, AMD_MERGE_PIPELINE):
         text = pipeline_path.read_text(encoding="utf-8")
         assert "MiniMax-H3 Timeline Guide Accuracy" not in text

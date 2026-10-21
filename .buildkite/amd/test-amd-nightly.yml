@@ -696,18 +696,22 @@ steps:
           - export ROCM_MINIMAX_H3_TIMELINE_ARTIFACT_DIR="$${BUILDKITE_BUILD_CHECKOUT_PATH:?}/artifacts/rocm-minimax-h3-timeline"
           - mkdir -p "$$ROCM_MINIMAX_H3_TIMELINE_ARTIFACT_DIR"
           - |
-            pytest --collect-only -q tests/e2e/accuracy/minimax_h3/test_minimax_h3_timeline_guides.py \
+            node="tests/e2e/accuracy/minimax_h3/test_minimax_h3_timeline_guides.py::test_minimax_h3_timeline_guides_condition_frames_and_audio"
+            pytest --collect-only -q "$$node" \
               -m "full_model and diffusion and rocm and MI325 and cards_2" --run-level full_model \
               > "$$ROCM_MINIMAX_H3_TIMELINE_ARTIFACT_DIR/collection.txt"
-            if ! grep -q '::' "$$ROCM_MINIMAX_H3_TIMELINE_ARTIFACT_DIR/collection.txt"; then
-              echo "No accuracy nodes collected for MiniMax-H3 Timeline Guide Accuracy" >&2
+            count=$$(awk -v node="$$node" 'index($$0, node) { n++ } END { print n + 0 }' \
+              "$$ROCM_MINIMAX_H3_TIMELINE_ARTIFACT_DIR/collection.txt")
+            if [[ "$$count" != 1 ]]; then
+              echo "Expected exactly one MiniMax-H3 timeline accuracy node, found $$count." >&2
               cat "$$ROCM_MINIMAX_H3_TIMELINE_ARTIFACT_DIR/collection.txt" >&2
               exit 5
             fi
           - |
             set +e
+            node="tests/e2e/accuracy/minimax_h3/test_minimax_h3_timeline_guides.py::test_minimax_h3_timeline_guides_condition_frames_and_audio"
             timeout --signal=TERM --kill-after=2m 165m \
-              pytest -s -v tests/e2e/accuracy/minimax_h3/test_minimax_h3_timeline_guides.py \
+              pytest -s -v "$$node" \
               -m "full_model and diffusion and rocm and MI325 and cards_2" --run-level full_model \
               --junitxml="$$ROCM_MINIMAX_H3_TIMELINE_ARTIFACT_DIR/pytest.xml" \
               2>&1 | tee "$$ROCM_MINIMAX_H3_TIMELINE_ARTIFACT_DIR/pytest.log"
@@ -732,18 +736,35 @@ steps:
           - export ROCM_MINIMAX_H3_I2VA_ARTIFACT_DIR="$${BUILDKITE_BUILD_CHECKOUT_PATH:?}/artifacts/rocm-minimax-h3-i2va"
           - mkdir -p "$$ROCM_MINIMAX_H3_I2VA_ARTIFACT_DIR"
           - |
-            pytest --collect-only -q tests/e2e/accuracy/minimax_h3/test_minimax_h3_i2va_ref2va_similarity.py \
+            nodes=(
+              "tests/e2e/accuracy/minimax_h3/test_minimax_h3_i2va_ref2va_similarity.py::test_minimax_h3_i2va_matches_official_reference"
+              "tests/e2e/accuracy/minimax_h3/test_minimax_h3_i2va_ref2va_similarity.py::test_minimax_h3_ref2va_matches_official_reference"
+            )
+            pytest --collect-only -q "$${nodes[@]}" \
               -m "full_model and diffusion and rocm and MI325 and cards_4" --run-level full_model \
               > "$$ROCM_MINIMAX_H3_I2VA_ARTIFACT_DIR/collection.txt"
-            if ! grep -q '::' "$$ROCM_MINIMAX_H3_I2VA_ARTIFACT_DIR/collection.txt"; then
-              echo "No accuracy nodes collected for MiniMax-H3 I2VA Ref2VA Accuracy" >&2
+            count=$$(awk '/::/ { n++ } END { print n + 0 }' \
+              "$$ROCM_MINIMAX_H3_I2VA_ARTIFACT_DIR/collection.txt")
+            if [[ "$$count" != "$${#nodes[@]}" ]]; then
+              echo "Expected exactly $${#nodes[@]} MiniMax-H3 I2VA/Ref2VA nodes, found $$count." >&2
               cat "$$ROCM_MINIMAX_H3_I2VA_ARTIFACT_DIR/collection.txt" >&2
               exit 5
             fi
+            for node in "$${nodes[@]}"; do
+              if ! grep -Fq "$$node" "$$ROCM_MINIMAX_H3_I2VA_ARTIFACT_DIR/collection.txt"; then
+                echo "MiniMax-H3 accuracy node was not collected: $$node" >&2
+                cat "$$ROCM_MINIMAX_H3_I2VA_ARTIFACT_DIR/collection.txt" >&2
+                exit 5
+              fi
+            done
           - |
             set +e
+            nodes=(
+              "tests/e2e/accuracy/minimax_h3/test_minimax_h3_i2va_ref2va_similarity.py::test_minimax_h3_i2va_matches_official_reference"
+              "tests/e2e/accuracy/minimax_h3/test_minimax_h3_i2va_ref2va_similarity.py::test_minimax_h3_ref2va_matches_official_reference"
+            )
             timeout --signal=TERM --kill-after=2m 165m \
-              pytest -s -v tests/e2e/accuracy/minimax_h3/test_minimax_h3_i2va_ref2va_similarity.py \
+              pytest -s -v "$${nodes[@]}" \
               -m "full_model and diffusion and rocm and MI325 and cards_4" --run-level full_model \
               --junitxml="$$ROCM_MINIMAX_H3_I2VA_ARTIFACT_DIR/pytest.xml" \
               2>&1 | tee "$$ROCM_MINIMAX_H3_I2VA_ARTIFACT_DIR/pytest.log"
