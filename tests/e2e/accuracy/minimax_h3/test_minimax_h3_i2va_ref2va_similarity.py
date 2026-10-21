@@ -102,6 +102,11 @@ SSIM_THRESHOLD = 0.97
 PSNR_THRESHOLD = 34.0
 # The worker RPC spans the full generation and shares the HTTP request budget.
 REQUEST_TIMEOUT_SECONDS = 60 * 60
+# A cold MI325 FL2VA load reached 11/13 shards before the previous 30-minute
+# deadline (AMD Buildkite #14272). Keep startup bounded while allowing the
+# retained four-GPU accuracy workload to finish loading.
+ENGINE_INIT_TIMEOUT_SECONDS = 60 * 60
+SERVER_STARTUP_TIMEOUT_SECONDS = 65 * 60
 
 
 def _model_name(model_env_var: str = MODEL_ENV_VAR, component: str = "FL2VA") -> str:
@@ -140,9 +145,9 @@ def _server_args() -> list[str]:
         "tile",
         "--vae-use-tiling",
         "--stage-init-timeout",
-        "1800",
+        str(ENGINE_INIT_TIMEOUT_SECONDS),
         "--init-timeout",
-        "1800",
+        str(ENGINE_INIT_TIMEOUT_SECONDS),
     ]
 
 
@@ -284,6 +289,7 @@ def test_minimax_h3_i2va_matches_official_reference(
         _server_args(),
         env_dict=server_env,
         use_omni=True,
+        startup_timeout=SERVER_STARTUP_TIMEOUT_SECONDS,
     ) as server:
         with image_path.open("rb") as image_file:
             response = requests.post(
@@ -367,6 +373,7 @@ def test_minimax_h3_ref2va_matches_official_reference(
         _server_args(),
         env_dict=server_env,
         use_omni=True,
+        startup_timeout=SERVER_STARTUP_TIMEOUT_SECONDS,
     ) as server:
         with input_video_path.open("rb") as video_file, input_audio_path.open("rb") as audio_file:
             response = requests.post(
