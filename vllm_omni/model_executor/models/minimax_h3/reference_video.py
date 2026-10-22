@@ -152,18 +152,19 @@ def _run_diagnostic_ffmpeg(command: list[str], *, output: str, workdir: str) -> 
     pid_path = diagnostic_dir / "ffmpeg.pid"
     output_path = diagnostic_dir / "ffmpeg-output-path.txt"
     diagnostic_command = [
-        *command[:4],
+        command[0],
         "-stats_period",
         "5",
         "-progress",
         str(progress_path),
-        *command[4:],
+        *command[1:],
     ]
     timeout_seconds = float(os.environ.get(MINIMAX_H3_DIAGNOSTIC_FFMPEG_TIMEOUT_ENV, "180"))
     started_at = time.monotonic()
     with stderr_path.open("w") as stderr_file:
         process = subprocess.Popen(
             diagnostic_command,
+            stdin=subprocess.DEVNULL,
             stdout=subprocess.DEVNULL,
             stderr=stderr_file,
             text=True,
@@ -476,6 +477,7 @@ def _transcode_reference_video(
         filters.append("tpad=stop_mode=clone:stop=-1")
     command = [
         "ffmpeg",
+        "-nostdin",
         "-y",
         "-loglevel",
         "error",
@@ -509,7 +511,7 @@ def _transcode_reference_video(
     if _diagnostic_enabled():
         _run_diagnostic_ffmpeg(command, output=output, workdir=workdir)
     else:
-        subprocess.run(command, check=True)
+        subprocess.run(command, check=True, stdin=subprocess.DEVNULL)
     return output
 
 

@@ -2506,11 +2506,11 @@ def test_r7_r8_ref2va_video_segment_matrix(
 def test_ref2va_transcode_zero_frame_count_keeps_video_stream(monkeypatch, tmp_path):
     from vllm_omni.diffusion.models.minimax_h3 import reference_video as reference_video_module
 
-    commands: list[list[str]] = []
+    calls: list[tuple[list[str], dict[str, Any]]] = []
     monkeypatch.setattr(
         reference_video_module.subprocess,
         "run",
-        lambda command, **_kwargs: commands.append(command),
+        lambda command, **kwargs: calls.append((command, kwargs)),
     )
 
     reference_video_module._transcode_reference_video(
@@ -2522,7 +2522,50 @@ def test_ref2va_transcode_zero_frame_count_keeps_video_stream(monkeypatch, tmp_p
         duration_seconds=4.0,
     )
 
-    assert "-frames:v" not in commands[0]
+    command, kwargs = calls[0]
+    assert command[:5] == ["ffmpeg", "-nostdin", "-y", "-loglevel", "error"]
+    assert "-frames:v" not in command
+    assert kwargs["stdin"] is reference_video_module.subprocess.DEVNULL
+
+
+def test_ref2va_diagnostic_transcode_preserves_ffmpeg_options(monkeypatch, tmp_path):
+    from vllm_omni.diffusion.models.minimax_h3 import reference_video as reference_video_module
+
+    calls: list[tuple[list[str], dict[str, Any]]] = []
+
+    class _Process:
+        pid = 123
+        returncode = 0
+
+        def wait(self, timeout):
+            return self.returncode
+
+    monkeypatch.setenv(reference_video_module.MINIMAX_H3_DIAGNOSTIC_ENV, "1")
+    monkeypatch.setattr(
+        reference_video_module.subprocess,
+        "Popen",
+        lambda command, **kwargs: _append_and_return(calls, (command, kwargs), _Process()),
+    )
+
+    reference_video_module._transcode_reference_video(
+        "input.mp4",
+        target_width=768,
+        target_height=448,
+        target_frame_count=96,
+        workdir=str(tmp_path),
+        duration_seconds=4.0,
+    )
+
+    command, kwargs = calls[0]
+    assert command[:5] == [
+        "ffmpeg",
+        "-stats_period",
+        "5",
+        "-progress",
+        str(tmp_path / "ffmpeg-progress.txt"),
+    ]
+    assert command[5:10] == ["-nostdin", "-y", "-loglevel", "error", "-ss"]
+    assert kwargs["stdin"] is reference_video_module.subprocess.DEVNULL
 
 
 def test_prepared_reference_video_descriptor_round_trip(tmp_path):
