@@ -76,10 +76,6 @@ def test_dedicated_engine_job_preserves_r2_01_engine_coverage() -> None:
     assert "tests/engine/test_async_omni_engine_abort.py" in commands
 
 
-AITER_MHA_CACHE_PREPARE = 'eval "$$(python .buildkite/amd/scripts/aiter_mha_cache.py prepare)"'
-AITER_MHA_CACHE_PUBLISH = "python .buildkite/amd/scripts/aiter_mha_cache.py publish"
-
-
 def test_r2_01_runs_once_fails_closed_and_publishes_results() -> None:
     commands = _find_step(R2_01_LABEL)["commands"]
     joined = "\n".join(commands)
@@ -88,11 +84,7 @@ def test_r2_01_runs_once_fails_closed_and_publishes_results() -> None:
     run_command = pytest_commands[0]
     argv = split(run_command)
     artifact_dir = "$$BUILDKITE_BUILD_CHECKOUT_PATH/artifacts/rocm-r2-01"
-    prepare_at = commands.index(AITER_MHA_CACHE_PREPARE)
-    pytest_at = commands.index(run_command)
 
-    assert prepare_at < pytest_at
-    assert AITER_MHA_CACHE_PUBLISH not in joined
     assert argv[:4] == [
         "timeout",
         "--signal=TERM",

@@ -119,14 +119,6 @@ def log(message: str) -> None:
     print(f"aiter-mha-cache: {message}", file=sys.stderr, flush=True)
 
 
-def _error_type(exc: BaseException) -> str:
-    """Return an exception type name without its message.
-
-    ``URLError`` stringifies the request URL, which can include credentials.
-    """
-    return type(exc).__name__
-
-
 def module_filename() -> str:
     return f"{MODULE_NAME}.so"
 
@@ -558,17 +550,16 @@ def discover_build_sources(
     query = urllib.parse.urlencode({"branch": branch, "commit": commit})
     try:
         listing = fetch(f"{BUILDKITE_PIPELINE_URL}/builds?{query}")
-    except (OSError, UnicodeError, ValueError, urllib.error.URLError) as exc:
-        # Commit and branch identify the trusted parent. Leave both, and the
-        # exception text, out of the log: URLError includes the request URL.
-        log(f"could not query Buildkite artifacts: {_error_type(exc)}")
+    except (OSError, UnicodeError, ValueError, urllib.error.URLError):
+        # Commit, branch, and exception text can contain sensitive values.
+        log("could not query exact Buildkite artifact candidates")
         return []
     sources: list[BuildSource] = []
     for number in _build_numbers_from_listing(listing)[:10]:
         try:
             details = json.loads(fetch(f"{BUILDKITE_PIPELINE_URL}/builds/{number}.json"))
-        except (json.JSONDecodeError, OSError, UnicodeError, ValueError, urllib.error.URLError) as exc:
-            log(f"could not verify Buildkite build #{number}: {_error_type(exc)}")
+        except (json.JSONDecodeError, OSError, UnicodeError, ValueError, urllib.error.URLError):
+            log(f"could not verify Buildkite build #{number}")
             continue
         if not isinstance(details, dict):
             continue
@@ -601,15 +592,16 @@ def discover_recent_branch_sources(
     query = urllib.parse.urlencode({"branch": branch})
     try:
         listing = fetch(f"{BUILDKITE_PIPELINE_URL}/builds?{query}")
-    except (OSError, UnicodeError, ValueError, urllib.error.URLError) as exc:
-        log(f"could not query recent Buildkite builds: {_error_type(exc)}")
+    except (OSError, UnicodeError, ValueError, urllib.error.URLError):
+        # The branch and exception may contain credentials or other secrets.
+        log("could not query recent trusted-branch Buildkite builds")
         return []
     sources: list[BuildSource] = []
     for number in _build_numbers_from_listing(listing)[:limit]:
         try:
             details = json.loads(fetch(f"{BUILDKITE_PIPELINE_URL}/builds/{number}.json"))
-        except (json.JSONDecodeError, OSError, UnicodeError, ValueError, urllib.error.URLError) as exc:
-            log(f"could not verify Buildkite build #{number}: {_error_type(exc)}")
+        except (json.JSONDecodeError, OSError, UnicodeError, ValueError, urllib.error.URLError):
+            log(f"could not verify recent Buildkite build #{number}")
             continue
         if not isinstance(details, dict):
             continue

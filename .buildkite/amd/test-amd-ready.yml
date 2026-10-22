@@ -378,10 +378,6 @@ steps:
     # artifacts relative to its checkout directory.
     - export R2_01_ARTIFACT_DIR="$$BUILDKITE_BUILD_CHECKOUT_PATH/artifacts/rocm-r2-01"
     - mkdir -p "$$R2_01_ARTIFACT_DIR"
-    # Restore the unmasked BF16 AITER module before the model-executor burn-in.
-    # This consumer does not publish a duplicate artifact; FA/AITER and
-    # merge Z-Image remain the producers.
-    - eval "$$(python .buildkite/amd/scripts/aiter_mha_cache.py prepare)"
     # The dedicated Engine Test below owns the only selected tests/engine case;
     # do not duplicate its model startup in this time-bounded coverage lane.
     # The CUDA ready job also covers tests/worker/test_batched_omni_output.py.

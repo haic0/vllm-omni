@@ -294,9 +294,15 @@ def test_main_artifact_accepts_exact_trusted_or_abi_compatible_commit(tmp_path: 
     recent_published = cache.stage_publication(job_dir, tmp_path / "recent", identity, recent_provenance)
     assert recent_published is not None
     recent_source = cache.BuildSource("build-recent", 14010, recent, "main", "", False)
+    incompatible_identity = {**identity, "python_cache_tag": "cpython-313"}
 
     # ABI identity is the compatibility gate; the Omni merge-base need not match.
     assert cache.provenance_matches_source(recent_published, recent_source, identity, consumer)
+    assert not cache.publication_matches(
+        recent_published,
+        incompatible_identity,
+        ldd_ok=lambda _path: True,
+    )
     assert not cache.provenance_matches_source(
         recent_published,
         recent_source,
@@ -491,12 +497,14 @@ def test_query_failure_does_not_log_request_url_or_parent_commit(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     marker = "a" * 40
+    secret = "secret-token"
+    branch = f"main-{secret}"
 
     def fetch(url: str) -> str:
-        raise urllib.error.URLError(f"http://user:embedded-userinfo@{url}")
+        raise urllib.error.URLError(f"http://user:{secret}@{url}")
 
     recent = cache.discover_recent_branch_sources(
-        branch="main",
+        branch=branch,
         current_build_id="current",
         fetch=fetch,
     )
@@ -509,9 +517,10 @@ def test_query_failure_does_not_log_request_url_or_parent_commit(
     assert sources == []
     captured = capsys.readouterr()
     assert marker not in captured.err
-    assert "embedded-userinfo" not in captured.err
+    assert secret not in captured.err
     assert "http://" not in captured.err
-    assert "URLError" in captured.err
+    assert "could not query exact Buildkite artifact candidates" in captured.err
+    assert "could not query recent trusted-branch Buildkite builds" in captured.err
 
 
 def test_candidate_sources_queries_the_pr_head_not_the_test_merge_commit() -> None:
