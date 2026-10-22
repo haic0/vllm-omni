@@ -1129,3 +1129,32 @@ def test_hunyuanvideo15_accuracy_is_one_nonblocking_nightly_job() -> None:
     for pipeline_path in (AMD_READY_PIPELINE, AMD_MERGE_PIPELINE):
         text = pipeline_path.read_text(encoding="utf-8")
         assert "HunyuanVideo-1.5 Video Similarity" not in text
+
+
+def test_entrypoints_full_model_is_one_nonblocking_nightly_job() -> None:
+    step = _find_step("ROCm · Entrypoints Full-Model · 2-GPU", AMD_NIGHTLY_PIPELINE)
+    assert step["grade"] == "NonBlocking"
+    assert step["agent_pool"] == "mi300_2"
+    assert step["depends_on"] == "amd-build"
+    assert step["mirror_hardwares"] == ["amdproduction"]
+    assert step["timeout_in_minutes"] == 180
+    commands = "\n".join(step["commands"])
+    assert "full_model and rocm and MI325 and cards_2" in commands
+    assert "--run-level full_model" in commands
+    assert "--collect-only" in commands
+    assert "Expected exactly 44 full-model entrypoint nodes" in commands
+    assert "test_speech_interrupts_playback_full" in commands
+    assert "TestBagelDiffusionSleepMode" in commands
+    assert "TestBagelCoordinatedSleepMode" in commands
+    assert "timeout --signal=TERM --kill-after=2m 165m" in commands
+    ready = _find_step("ROCm · Entrypoints GPU Coverage (R2-02)", AMD_READY_PIPELINE)
+    ready_commands = "\n".join(ready["commands"])
+    assert ready["agent_pool"] == "mi300_1"
+    assert '--run-level "core_model"' in ready_commands
+    marker = ready_commands.split("-m ", 1)[1].split("--run-level", 1)[0]
+    assert "core_model" in marker
+    assert "full_model" not in marker
+    assert "not" in marker and "cards_2" in marker
+    for pipeline_path in (AMD_READY_PIPELINE, AMD_MERGE_PIPELINE):
+        text = pipeline_path.read_text(encoding="utf-8")
+        assert "ROCm · Entrypoints Full-Model · 2-GPU" not in text

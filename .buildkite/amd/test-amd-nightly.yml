@@ -680,3 +680,54 @@ steps:
             fi
 
             exit "$$status"
+
+
+  - group: ":full_moon: Entrypoints Full-Model MI300 Nightly"
+    steps:
+      - label: "ROCm · Entrypoints Full-Model · 2-GPU"
+        agent_pool: mi300_2
+        depends_on: amd-build
+        mirror_hardwares: [amdproduction]
+        grade: NonBlocking
+        timeout_in_minutes: 180
+        artifact_paths:
+          - artifacts/rocm-entrypoints-full-2gpu/**/*
+        commands:
+          - export ROCM_ENTRYPOINTS_FULL_ARTIFACT_DIR="$${BUILDKITE_BUILD_CHECKOUT_PATH:?}/artifacts/rocm-entrypoints-full-2gpu"
+          - mkdir -p "$$ROCM_ENTRYPOINTS_FULL_ARTIFACT_DIR"
+          # Nightly owns the 20-repeat duplex interruptions and BAGEL sleep.
+          # READY R2-02 stays on core_model and one GPU.
+          - |
+            marker="full_model and rocm and MI325 and cards_2"
+            pytest --collect-only -q tests/entrypoints/ \
+              -m "$$marker" --run-level full_model \
+              > "$$ROCM_ENTRYPOINTS_FULL_ARTIFACT_DIR/collection.txt"
+            count=$$(awk '/::/ { n++ } END { print n + 0 }' \
+              "$$ROCM_ENTRYPOINTS_FULL_ARTIFACT_DIR/collection.txt")
+            if [[ "$$count" != 44 ]]; then
+              echo "Expected exactly 44 full-model entrypoint nodes, found $$count." >&2
+              cat "$$ROCM_ENTRYPOINTS_FULL_ARTIFACT_DIR/collection.txt" >&2
+              exit 5
+            fi
+            for node in \
+              "test_speech_interrupts_playback_full" \
+              "TestBagelDiffusionSleepMode" \
+              "TestBagelCoordinatedSleepMode"; do
+              if ! grep -Fq "$$node" "$$ROCM_ENTRYPOINTS_FULL_ARTIFACT_DIR/collection.txt"; then
+                echo "Full-model entrypoint node was not collected: $$node" >&2
+                cat "$$ROCM_ENTRYPOINTS_FULL_ARTIFACT_DIR/collection.txt" >&2
+                exit 5
+              fi
+            done
+          - |
+            set +e
+            timeout --signal=TERM --kill-after=2m 165m \
+              pytest -s -v -ra tests/entrypoints/ \
+              -m "full_model and rocm and MI325 and cards_2" --run-level full_model \
+              --junitxml="$$ROCM_ENTRYPOINTS_FULL_ARTIFACT_DIR/pytest.xml" \
+              2>&1 | tee "$$ROCM_ENTRYPOINTS_FULL_ARTIFACT_DIR/pytest.log"
+            status=$${PIPESTATUS[0]}
+            set -e
+            tail -n 100 "$$ROCM_ENTRYPOINTS_FULL_ARTIFACT_DIR/pytest.log" > \
+              "$$ROCM_ENTRYPOINTS_FULL_ARTIFACT_DIR/pytest-summary.txt"
+            exit "$$status"
