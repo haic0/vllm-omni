@@ -180,7 +180,7 @@ def _scores(prediction: Image.Image, reference: Image.Image) -> dict[str, float]
 
 
 @pytest.mark.parametrize("case_name", ["it2i", "t2i"])
-@hardware_test(res={"cuda": "H100", "npu": "A3"}, num_cards=1)
+@hardware_test(res={"cuda": "H100", "npu": "A3", "rocm": "MI325"}, num_cards=1)
 def test_qwen_image_21_matches_reference(accuracy_artifact_root: Path, run_level: str, case_name: str) -> None:
     """Own both generations and fresh artifacts; no prerequisite test or old output reuse."""
     assert run_level == "full_model", "Accuracy requires --run-level full_model"
@@ -191,7 +191,7 @@ def test_qwen_image_21_matches_reference(accuracy_artifact_root: Path, run_level
     policy = json.loads((HERE / "thresholds.json").read_text(encoding="utf-8"))
     bounds = policy[case_name]
     write_json_artifact(output / "threshold_policy.json", policy)
-    device_type = current_omni_platform.device_type
+    device_type = "rocm" if current_omni_platform.is_rocm() else current_omni_platform.device_type
     device = device_preflight(device_type)
     device_name = device["device"]
     profile = resolve_device_profile(device_name, profiles=bounds)
