@@ -808,7 +808,6 @@ def test_z_image_merge_timeout_covers_cold_aiter_compile() -> None:
 @pytest.mark.parametrize(
     ("label", "pytest_marker"),
     [
-        ("ROCm · FlashAttention/AITER GPU Coverage", "tests/diffusion/attention/"),
         ("Custom Pipeline Test", "tests/e2e/features/custom_pipeline/"),
         ("Diffusion · Batch Test", "tests/diffusion/batching"),
     ],
@@ -823,17 +822,22 @@ def test_ready_jobs_restore_bf16_aiter_module_without_publishing(label: str, pyt
     assert all("VLLM_ROCM_USE_AITER=0" not in command for command in step["commands"])
 
 
-def test_ready_flashattention_keeps_one_worker_and_mammoth_reuse() -> None:
+def test_ready_flashattention_publishes_bf16_aiter_module_on_success() -> None:
     step = _find_step("ROCm · FlashAttention/AITER GPU Coverage", AMD_READY_PIPELINE)
     pytest_commands = [command for command in step["commands"] if "pytest" in command]
 
+    assert step["agent_pool"] == "mi300_1"
+    assert step["depends_on"] == "amd-build"
+    assert step["mirror_hardwares"] == ["amdproduction"]
     assert step["grade"] == "NonBlocking"
     assert step["timeout_in_minutes"] == 60
     assert "export VLLM_ROCM_USE_AITER=1" in step["commands"]
+    _assert_build_scoped_aiter_mha_cache(step, "tests/diffusion/attention/", publishes=True)
     assert len(pytest_commands) == 2
     assert all("-n 1" in command for command in pytest_commands)
     assert "tests/diffusion/models/mammoth_moda2/test_dit_attention_cuda.py" in pytest_commands[1]
     assert "core_model and rocm and MI325 and cards_1" in pytest_commands[0]
+    assert AITER_MHA_CACHE_PUBLISH not in pytest_commands[1]
 
 
 def test_stable_audio_layerwise_reuses_the_bf16_aiter_module_cache() -> None:
@@ -1070,6 +1074,29 @@ def test_wan22_similarity_accepts_complete_artifacts(tmp_path: Path) -> None:
         path.write_bytes(b"x")
         paths.append(path)
     require_similarity_artifacts(paths)
+
+
+def test_hunyuan_image3_lora_accuracy_is_one_nonblocking_nightly_job() -> None:
+    step = _find_step("HunyuanImage3 LoRA Accuracy", AMD_NIGHTLY_PIPELINE)
+    assert step["grade"] == "NonBlocking"
+    assert step["agent_pool"] == "mi300_4"
+    assert step["mirror_hardwares"] == ["amdproduction"]
+    assert step["timeout_in_minutes"] == 180
+    commands = "\n".join(step["commands"])
+    assert "full_model and diffusion and rocm and MI325 and cards_4" in commands
+    assert "--run-level full_model" in commands
+    assert "--collect-only" in commands
+    assert "exit 5" in commands
+    assert "pytest.xml" in commands
+    assert "test_hunyuan_image3_lora.py::test_hunyuan_image3_dit_lora_generation" in commands
+    assert "Expected exactly one HunyuanImage3 LoRA accuracy node" in commands
+    assert step["env"]["DIFFUSION_ATTENTION_BACKEND"] == "TORCH_SDPA"
+    assert step["env"]["HUNYUAN_IMAGE3_DEVICES"] == "0,1,2,3"
+    assert "test_hunyuan_image3_lora.py" in commands
+    assert "test_hunyuan_image3_pixel_accuracy.py" not in commands
+    for pipeline_path in (AMD_READY_PIPELINE, AMD_MERGE_PIPELINE):
+        text = pipeline_path.read_text(encoding="utf-8")
+        assert "HunyuanImage3 LoRA Accuracy" not in text
 
 
 def test_hunyuanvideo15_accuracy_is_one_nonblocking_nightly_job() -> None:
