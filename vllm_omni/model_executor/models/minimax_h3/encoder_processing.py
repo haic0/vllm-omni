@@ -8,7 +8,6 @@ import math
 import os
 import subprocess
 import tempfile
-import time
 from collections.abc import Callable, Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import AbstractContextManager, nullcontext
@@ -18,7 +17,6 @@ from typing import Any
 import numpy as np
 import torch
 from PIL import Image
-from vllm.logger import init_logger
 
 from vllm_omni.errors import OmniClientError
 from vllm_omni.model_executor.models.minimax_h3.conditioning import (
@@ -50,27 +48,9 @@ from vllm_omni.model_executor.models.minimax_h3.timeline_guides import (
     prepare_timeline_guides,
 )
 
-logger = init_logger(__name__)
-
 MINIMAX_H3_FPS = 24
 MINIMAX_H3_MIN_OUTPUT_SECONDS = 4.0
 MINIMAX_H3_MAX_OUTPUT_SECONDS = 15.0
-
-
-def _diagnostic_stage(stage: str, started_at: float | None = None, **details: Any) -> float:
-    """Emit opt-in, immediately visible timestamps for a stuck H3 request."""
-    now = time.monotonic()
-    if os.environ.get("VLLM_OMNI_MINIMAX_H3_DIAG") != "1":
-        return now
-    rank = (
-        torch.distributed.get_rank() if torch.distributed.is_available() and torch.distributed.is_initialized() else -1
-    )
-    fields = [f"rank={rank}", f"pid={os.getpid()}", f"stage={stage}"]
-    if started_at is not None:
-        fields.append(f"elapsed_s={now - started_at:.3f}")
-    fields.extend(f"{name}={value}" for name, value in sorted(details.items()))
-    logger.warning("[MiniMaxH3Diag] %s", " ".join(fields))
-    return now
 
 
 def _items(value: Any) -> list[Any]:
@@ -503,7 +483,6 @@ def prepare_encoder_inputs(
     prepared_reference_videos: list[dict[str, Any]] | None = None,
 ) -> PreparedEncoderInputs:
     """Decode references once and prepare the shared text/codec presentation."""
-    prepare_started = _diagnostic_stage("prepare_encoder_inputs.begin")
     if isinstance(prompt, str):
         prompt = {"prompt": prompt}
     if not isinstance(prompt, dict):
@@ -624,11 +603,6 @@ def prepare_encoder_inputs(
         prepared_videos: list[dict[str, Any]] = []
         if videos:
             with tempfile.TemporaryDirectory(prefix="minimax_h3_encoder_") as workdir:
-                video_prepare_started = _diagnostic_stage(
-                    "prepare_reference_videos.begin",
-                    count=len(videos),
-                    target_frames=num_frames,
-                )
                 prepared_videos = _reuse_prepared_reference_videos(
                     prepared_reference_videos, expected_count=len(videos)
                 )
@@ -639,11 +613,6 @@ def prepare_encoder_inputs(
                         workdir=workdir,
                         start_time_seconds=extra_args.get("start_time_seconds"),
                     )
-                _diagnostic_stage(
-                    "prepare_reference_videos.end",
-                    video_prepare_started,
-                    count=len(prepared_videos),
-                )
                 audio_pool = ThreadPoolExecutor(max_workers=1)
                 try:
                     audio_futures = [
@@ -660,32 +629,12 @@ def prepare_encoder_inputs(
                         else None
                         for item in prepared_videos
                     ]
-                    for video_index, (item, audio_future) in enumerate(zip(prepared_videos, audio_futures)):
-                        frame_load_started = _diagnostic_stage(
-                            "load_video_frames.begin",
-                            video_index=video_index,
-                        )
+                    for item, audio_future in zip(prepared_videos, audio_futures):
                         full_frames = load_video_frames(item["prepared_path"])
-                        _diagnostic_stage(
-                            "load_video_frames.end",
-                            frame_load_started,
-                            frame_count=len(full_frames),
-                            video_index=video_index,
-                        )
                         encoded_video_inputs.append(_frames_to_tensor(full_frames))
-                        sample_started = _diagnostic_stage(
-                            "sample_reference_video_frames.begin",
-                            video_index=video_index,
-                        )
                         sampled = sample_reference_video_frames(
                             item["prepared_path"],
                             decoded_frames=full_frames,
-                        )
-                        _diagnostic_stage(
-                            "sample_reference_video_frames.end",
-                            sample_started,
-                            sample_count=len(sampled["frames"]),
-                            video_index=video_index,
                         )
                         video_timestamps.append(sampled["block_timestamps"])
                         frames = np.stack(sampled["frames"])
@@ -704,18 +653,7 @@ def prepare_encoder_inputs(
                             )
                         )
                         if audio_future is not None:
-                            audio_wait_started = _diagnostic_stage(
-                                "load_video_audio.wait.begin",
-                                video_index=video_index,
-                            )
                             waveform, sample_rate = audio_future.result()
-                            _diagnostic_stage(
-                                "load_video_audio.wait.end",
-                                audio_wait_started,
-                                sample_rate=sample_rate,
-                                samples=waveform.shape[-1],
-                                video_index=video_index,
-                            )
                             video_audio_inputs.append((waveform.float().contiguous(), int(sample_rate)))
                         else:
                             video_audio_inputs.append(None)
@@ -775,16 +713,7 @@ def prepare_encoder_inputs(
 
     if raw_audio is not None and not lock_audio:
         validate_reference_audio_files(raw_audio)
-    standalone_audio_started = _diagnostic_stage(
-        "load_standalone_audio.begin",
-        count=len(audio_values),
-    )
     standalone_audios = _load_audios(raw_audio) if raw_audio is not None else []
-    _diagnostic_stage(
-        "load_standalone_audio.end",
-        standalone_audio_started,
-        count=len(standalone_audios),
-    )
     if lock_audio:
         waveform, rate = standalone_audios[0]
         if rate <= 0 or waveform.ndim not in (1, 2) or waveform.numel() == 0 or not torch.isfinite(waveform).all():
@@ -821,7 +750,7 @@ def prepare_encoder_inputs(
     if not lock_audio:
         validate_reference_audio_waveforms(audio_inputs[embedded_audio_count:])
 
-    result = PreparedEncoderInputs(
+    return PreparedEncoderInputs(
         prompt=text,
         media=media_input,
         images=images,
@@ -829,8 +758,6 @@ def prepare_encoder_inputs(
         video_timestamps=video_timestamps,
         condition_labels=condition_labels,
     )
-    _diagnostic_stage("prepare_encoder_inputs.end", prepare_started, task=task)
-    return result
 
 
 def _image_from_tensor(value: torch.Tensor) -> Image.Image:
@@ -914,13 +841,6 @@ def encode_media(
     Every visual participant must call this function with the same references.
     Component scopes allow the diffusion runner to stage one codec at a time.
     """
-    encode_started = _diagnostic_stage(
-        "encode_media.begin",
-        audio_count=len(media.audios) + sum(item is not None for item in media.video_audios),
-        emit_conditioning=emit_conditioning,
-        image_count=len(media.images),
-        video_count=len(media.videos),
-    )
     # Validate before the non-leader return so all participants reject bad input.
     audio_inputs = _effective_audio_inputs(
         media.video_audios,
@@ -944,20 +864,9 @@ def encode_media(
                 image = _image_from_tensor(value)
                 visual_rows.append(video_vae.encode_image(image))
                 visual_shapes.append((1, image.height // 16, image.width // 16))
-            for video_index, value in enumerate(media.videos):
+            for value in media.videos:
                 frames = np.asarray(value.detach().cpu().to(torch.uint8).contiguous().numpy())
-                video_encode_started = _diagnostic_stage(
-                    "video_vae.encode_video.begin",
-                    frame_count=frames.shape[0],
-                    video_index=video_index,
-                )
                 rows, shape = video_vae.encode_video(frames)
-                _diagnostic_stage(
-                    "video_vae.encode_video.end",
-                    video_encode_started,
-                    latent_shape=tuple(int(item) for item in shape),
-                    video_index=video_index,
-                )
                 visual_rows.append(rows)
                 visual_shapes.append(tuple(int(item) for item in shape))
             if media.video_edit is not None:
@@ -980,7 +889,6 @@ def encode_media(
             ]
 
     if not emit_conditioning:
-        _diagnostic_stage("encode_media.end", encode_started, emit_conditioning=False)
         return None
 
     audio_rows: list[torch.Tensor] = []
@@ -991,20 +899,8 @@ def encode_media(
         if audio_vae is None:
             raise RuntimeError("MiniMax H3 audio WVAE is not resident on the encoder leader")
         with component_scope(audio_vae):
-            for audio_index, (waveform, sample_rate) in enumerate(audio_inputs):
-                audio_encode_started = _diagnostic_stage(
-                    "audio_vae.encode_waveform.begin",
-                    audio_index=audio_index,
-                    sample_rate=sample_rate,
-                    samples=waveform.shape[-1],
-                )
+            for waveform, sample_rate in audio_inputs:
                 rows, length = audio_vae.encode_waveform(waveform, sample_rate)
-                _diagnostic_stage(
-                    "audio_vae.encode_waveform.end",
-                    audio_encode_started,
-                    audio_index=audio_index,
-                    latent_length=int(length),
-                )
                 audio_rows.append(rows)
                 audio_lengths.append(int(length))
             if media.audio_edit is not None:
@@ -1068,7 +964,7 @@ def encode_media(
             device=audio_edit_clean_rows.device,
             dtype=torch.float32,
         ).contiguous()
-    result = MiniMaxH3EncoderMediaConditioning(
+    return MiniMaxH3EncoderMediaConditioning(
         task=media.task,
         height=media.height,
         width=media.width,
@@ -1090,5 +986,3 @@ def encode_media(
         guide_visual_condition=guide_visual,
         guide_audio_condition=guide_audio,
     )
-    _diagnostic_stage("encode_media.end", encode_started, emit_conditioning=True)
-    return result

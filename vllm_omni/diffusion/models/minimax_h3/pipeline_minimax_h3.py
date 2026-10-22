@@ -7,7 +7,6 @@ from __future__ import annotations
 import json
 import math
 import os
-import time
 from collections.abc import Iterable, Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager, nullcontext
@@ -180,21 +179,6 @@ if TYPE_CHECKING:
     from vllm_omni.diffusion.worker.utils import StepRequestState
 
 logger = init_logger(__name__)
-
-
-def _diagnostic_stage(stage: str, started_at: float | None = None, **details: Any) -> float:
-    """Emit opt-in timestamps around distributed H3 conditioning stages."""
-    now = time.monotonic()
-    if os.environ.get("VLLM_OMNI_MINIMAX_H3_DIAG") != "1":
-        return now
-    rank = dist.get_rank() if dist.is_available() and dist.is_initialized() else -1
-    fields = [f"rank={rank}", f"pid={os.getpid()}", f"stage={stage}"]
-    if started_at is not None:
-        fields.append(f"elapsed_s={now - started_at:.3f}")
-    fields.extend(f"{name}={value}" for name, value in sorted(details.items()))
-    logger.warning("[MiniMaxH3Diag] %s", " ".join(fields))
-    return now
-
 
 if TYPE_CHECKING:
     from vllm.lora.lora_model import LoRAModel
@@ -2670,54 +2654,30 @@ class MiniMaxH3Pipeline(
 
     def _distribute_media_inputs(self, media: MiniMaxH3EncoderMediaInput | None) -> MiniMaxH3EncoderMediaInput:
         group, rank, world_size = _dit_rank_world()
-        tensors = media.to_mm_tensors() if media is not None else []
-        distribute_started = _diagnostic_stage(
-            "media_distribution.begin",
-            tensor_count=len(tensors),
-            world_size=world_size,
-        )
         if world_size == 1:
             assert media is not None
-            _diagnostic_stage("media_distribution.end", distribute_started, world_size=world_size)
             return media
+        tensors = media.to_mm_tensors() if media is not None else []
         header = [(media.to_metadata(), [value.dtype for value in tensors])] if media is not None else [None]
-        header_started = _diagnostic_stage("media_distribution.header_broadcast.begin")
         dist.broadcast_object_list(header, src=0, group=group)
-        _diagnostic_stage("media_distribution.header_broadcast.end", header_started)
         metadata, dtypes = header[0]
         received = []
         for index, dtype in enumerate(dtypes):
-            tensor_started = _diagnostic_stage(
-                "media_distribution.tensor_broadcast.begin",
-                dtype=dtype,
-                tensor_index=index,
-            )
             value = _broadcast_tensor(tensors[index] if rank == 0 else None, dtype=dtype, device=self.device)
-            _diagnostic_stage(
-                "media_distribution.tensor_broadcast.end",
-                tensor_started,
-                shape=tuple(value.shape),
-                tensor_index=index,
-            )
             if rank != 0:
                 received.append(value.cpu())
             del value
         if rank == 0:
             assert media is not None
-            _diagnostic_stage("media_distribution.end", distribute_started, world_size=world_size)
             return media
-        result = MiniMaxH3EncoderMediaInput.from_mm_tensors(received, metadata)
-        _diagnostic_stage("media_distribution.end", distribute_started, world_size=world_size)
-        return result
+        return MiniMaxH3EncoderMediaInput.from_mm_tensors(received, metadata)
 
     def _broadcast_media_conditioning(
         self, conditioning: MiniMaxH3EncoderMediaConditioning | None
     ) -> MiniMaxH3EncoderMediaConditioning:
         group, rank, world_size = _dit_rank_world()
-        broadcast_started = _diagnostic_stage("conditioning_broadcast.begin", world_size=world_size)
         if world_size == 1:
             assert conditioning is not None
-            _diagnostic_stage("conditioning_broadcast.end", broadcast_started, world_size=world_size)
             return conditioning
         tensor_names = (
             "visual_condition",
@@ -2742,35 +2702,16 @@ class MiniMaxH3Pipeline(
                 for name in tensor_names
             }
             header[0] = (metadata, dtypes)
-        header_started = _diagnostic_stage("conditioning_broadcast.header.begin")
         dist.broadcast_object_list(header, src=0, group=group)
-        _diagnostic_stage("conditioning_broadcast.header.end", header_started)
         metadata, dtypes = header[0]
         tensors = {}
         for name, dtype in dtypes.items():
             source = getattr(conditioning, name) if rank == 0 else None
-            if dtype is None:
-                tensors[name] = None
-                continue
-            tensor_started = _diagnostic_stage(
-                "conditioning_broadcast.tensor.begin",
-                dtype=dtype,
-                tensor_name=name,
-            )
-            tensors[name] = _broadcast_tensor(source, dtype=dtype, device=self.device)
-            _diagnostic_stage(
-                "conditioning_broadcast.tensor.end",
-                tensor_started,
-                shape=tuple(tensors[name].shape),
-                tensor_name=name,
-            )
-        result = MiniMaxH3EncoderMediaConditioning(**metadata, **tensors)
-        _diagnostic_stage("conditioning_broadcast.end", broadcast_started, world_size=world_size)
-        return result
+            tensors[name] = _broadcast_tensor(source, dtype=dtype, device=self.device) if dtype is not None else None
+        return MiniMaxH3EncoderMediaConditioning(**metadata, **tensors)
 
     def _encode_local_media(self, media: MiniMaxH3EncoderMediaInput | None) -> MiniMaxH3EncoderMediaConditioning:
         group, rank, world_size = _dit_rank_world()
-        local_media_started = _diagnostic_stage("local_media_conditioning.begin", world_size=world_size)
         distributed_video = self.video_vae.is_distributed_enabled()
         if distributed_video:
             media = self._distribute_media_inputs(media)
@@ -2779,10 +2720,6 @@ class MiniMaxH3Pipeline(
         try:
             if rank == 0 or distributed_video:
                 assert media is not None
-                encode_started = _diagnostic_stage(
-                    "local_media_conditioning.encode_media.begin",
-                    distributed_video=distributed_video,
-                )
                 conditioning = encode_media(
                     media,
                     video_vae=self.video_vae,
@@ -2790,27 +2727,15 @@ class MiniMaxH3Pipeline(
                     emit_conditioning=rank == 0,
                     component_scope=self._component_on_device,
                 )
-                _diagnostic_stage(
-                    "local_media_conditioning.encode_media.end",
-                    encode_started,
-                    distributed_video=distributed_video,
-                )
         except ValueError as exc:
             error = OmniClientError(str(exc))
         except Exception as exc:
             error = exc
-        if error is not None:
-            _diagnostic_stage(
-                "local_media_conditioning.encode_media.error",
-                error_type=type(error).__name__,
-            )
         if world_size > 1:
             # All participants finish the codec phase before any latent broadcast.
             errors = [None] * world_size
             info = (str(error), isinstance(error, OmniClientError)) if error is not None else None
-            gather_started = _diagnostic_stage("local_media_conditioning.error_all_gather.begin")
             dist.all_gather_object(errors, info, group=group)
-            _diagnostic_stage("local_media_conditioning.error_all_gather.end", gather_started)
             for info in errors:
                 if info is not None:
                     if error is not None:
@@ -2819,9 +2744,7 @@ class MiniMaxH3Pipeline(
                     raise OmniClientError(message) if is_client_error else RuntimeError(message)
         elif error is not None:
             raise error
-        result = self._broadcast_media_conditioning(conditioning)
-        _diagnostic_stage("local_media_conditioning.end", local_media_started, world_size=world_size)
-        return result
+        return self._broadcast_media_conditioning(conditioning)
 
     def _predict_visual_condition_shapes(
         self,
@@ -2847,7 +2770,6 @@ class MiniMaxH3Pipeline(
         Invalid continuation prompts are broadcast before any encoder collective.
         """
         group, rank, world_size = _dit_rank_world()
-        conditioning_started = _diagnostic_stage("prepare_local_conditioning.begin", world_size=world_size)
         prompts = (sampling.extra_args or {}).get("continuation_prompts")
         prepared = text_conditioning = None
         initial_noise_params = None
@@ -2884,17 +2806,11 @@ class MiniMaxH3Pipeline(
                     raise OmniClientError(
                         "MiniMax H3 diffusion stage requires text encoder conditioning when text_encoder is not loaded"
                     )
-                prepare_inputs_started = _diagnostic_stage("prepare_local_conditioning.prepare_inputs.begin")
                 prepared = prepare_encoder_inputs(
                     raw_prompt,
                     sampling,
                     task=task,
                     prepared_reference_videos=self._extract_prepared_reference_videos(raw_prompt),
-                )
-                _diagnostic_stage(
-                    "prepare_local_conditioning.prepare_inputs.end",
-                    prepare_inputs_started,
-                    task=task,
                 )
                 continuation = None
                 if prompts is not None or (request_context is not None and task == "ref2va"):
@@ -2943,17 +2859,10 @@ class MiniMaxH3Pipeline(
                         }
             except Exception as exc:
                 error = exc
-        exception_broadcast_started = _diagnostic_stage("prepare_local_conditioning.exception_broadcast.begin")
         _broadcast_rank0_exception(error)
-        _diagnostic_stage(
-            "prepare_local_conditioning.exception_broadcast.end",
-            exception_broadcast_started,
-        )
         header = [(text_conditioning is not None, initial_noise_params, visual_noise_params)]
         if world_size > 1:
-            header_started = _diagnostic_stage("prepare_local_conditioning.header_broadcast.begin")
             dist.broadcast_object_list(header, src=0, group=group)
-            _diagnostic_stage("prepare_local_conditioning.header_broadcast.end", header_started)
         reuse_text, initial_noise_params, visual_noise_params = header[0]
         executor = (
             ThreadPoolExecutor(max_workers=1, thread_name_prefix="minimax_h3_initial_noise")
@@ -2973,7 +2882,6 @@ class MiniMaxH3Pipeline(
                 else None
             )
             if reuse_text:
-                text_started = _diagnostic_stage("text_conditioning.broadcast.begin")
                 hidden = _broadcast_tensor(
                     text_conditioning.hidden_states if rank == 0 else None,
                     dtype=torch.bfloat16,
@@ -2982,11 +2890,8 @@ class MiniMaxH3Pipeline(
                 tags = _broadcast_tensor(
                     text_conditioning.token_tags if rank == 0 else None, dtype=torch.long, device=self.device
                 )
-                _diagnostic_stage("text_conditioning.broadcast.end", text_started)
             else:
-                text_started = _diagnostic_stage("text_conditioning.encode_prompt.begin")
                 hidden, tags = self.encode_prompt(prepared)
-                _diagnostic_stage("text_conditioning.encode_prompt.end", text_started)
             window_text = None
             if prompts is not None:
                 window_text = [(hidden, tags)]
@@ -2996,9 +2901,7 @@ class MiniMaxH3Pipeline(
             media = self._encode_local_media(prepared.media if prepared is not None else None)
             if initial_noise is not None:
                 assert request_context is not None
-                noise_started = _diagnostic_stage("initial_noise.wait.begin")
                 request_context["precomputed_initial_noise"] = initial_noise.result()
-                _diagnostic_stage("initial_noise.wait.end", noise_started)
             if visual_noise is not None:
                 assert request_context is not None
                 assert visual_noise_params is not None
@@ -3009,12 +2912,10 @@ class MiniMaxH3Pipeline(
                         "MiniMax H3 predicted visual condition shapes do not match encoded shapes: "
                         f"predicted {predicted_shapes}, encoded {actual_shapes}"
                     )
-                visual_noise_started = _diagnostic_stage("visual_condition_noise.wait.begin")
                 request_context["precomputed_visual_condition_noise"] = visual_noise.result()
-                _diagnostic_stage("visual_condition_noise.wait.end", visual_noise_started)
-            result = MiniMaxH3EncoderConditioning.from_components(MiniMaxH3TextConditioning(hidden, tags), media)
-            _diagnostic_stage("prepare_local_conditioning.end", conditioning_started, world_size=world_size)
-            return result, window_text
+            return MiniMaxH3EncoderConditioning.from_components(
+                MiniMaxH3TextConditioning(hidden, tags), media
+            ), window_text
         finally:
             if executor is not None:
                 executor.shutdown(wait=True, cancel_futures=True)

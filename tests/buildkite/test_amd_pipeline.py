@@ -1161,20 +1161,9 @@ def test_minimax_h3_accuracy_has_two_nonblocking_nightly_jobs() -> None:
     assert "test_minimax_h3_timeline_guides_condition_frames_and_audio" in timeline_commands
     assert "Expected exactly one MiniMax-H3 timeline accuracy node" in timeline_commands
     i2va_commands = "\n".join(i2va["commands"])
-    assert i2va["env"]["VLLM_OMNI_MINIMAX_H3_DIAG"] == "1"
-    assert i2va["env"]["VLLM_OMNI_MINIMAX_H3_FFMPEG_TIMEOUT"] == "180"
-    assert "VLLM_OMNI_MINIMAX_H3_DIAG_DIR" in i2va_commands
-    assert "ffmpeg -hide_banner -version" in i2va_commands
-    assert "/sys/fs/cgroup/cpu.stat" in i2va_commands
-    assert "diagnostic_watchdog" in i2va_commands
-    assert "/proc/$$pid/syscall" in i2va_commands
-    assert "external-watchdog.log" in i2va_commands
-    assert i2va_commands.index('while [[ -z "$$pid" ]]') < i2va_commands.index("local deadline=$$((SECONDS + 240))")
-    assert "pid_detected pid=$$pid deadline_s=240" in i2va_commands
-    assert "test_minimax_h3_i2va_matches_official_reference" not in i2va_commands
+    assert "test_minimax_h3_i2va_matches_official_reference" in i2va_commands
     assert "test_minimax_h3_ref2va_matches_official_reference" in i2va_commands
-    assert "Expected exactly one MiniMax-H3 Ref2VA diagnostic node" in i2va_commands
-    assert "timeout --signal=TERM --kill-after=2m 90m" in i2va_commands
+    assert "Expected exactly $${#nodes[@]} MiniMax-H3 I2VA/Ref2VA nodes" in i2va_commands
     for pipeline_path in (AMD_READY_PIPELINE, AMD_MERGE_PIPELINE):
         text = pipeline_path.read_text(encoding="utf-8")
         assert "MiniMax-H3 Timeline Guide Accuracy" not in text

@@ -730,120 +730,45 @@ steps:
         timeout_in_minutes: 180
         env:
           DIFFUSION_ATTENTION_BACKEND: TORCH_SDPA
-          VLLM_OMNI_MINIMAX_H3_DIAG: "1"
-          VLLM_OMNI_MINIMAX_H3_FFMPEG_TIMEOUT: "180"
         artifact_paths:
           - artifacts/rocm-minimax-h3-i2va/**/*
         commands:
           - export ROCM_MINIMAX_H3_I2VA_ARTIFACT_DIR="$${BUILDKITE_BUILD_CHECKOUT_PATH:?}/artifacts/rocm-minimax-h3-i2va"
           - mkdir -p "$$ROCM_MINIMAX_H3_I2VA_ARTIFACT_DIR"
-          - export VLLM_OMNI_MINIMAX_H3_DIAG_DIR="$$ROCM_MINIMAX_H3_I2VA_ARTIFACT_DIR/media-subprocess"
-          - mkdir -p "$$VLLM_OMNI_MINIMAX_H3_DIAG_DIR"
           - |
-            echo "--- MiniMax-H3 media subprocess environment"
-            ffmpeg -hide_banner -version | head -n 3
-            ffprobe -hide_banner -version | head -n 3
-            command -v timeout || true
-            command -v strace || true
-            df -h /tmp
-            df -i /tmp
-            if [[ -r /sys/fs/cgroup/cpu.max ]]; then
-              echo "cpu.max=$$(cat /sys/fs/cgroup/cpu.max)"
-            fi
-            if [[ -r /sys/fs/cgroup/cpu.stat ]]; then
-              sed 's/^/cpu.stat: /' /sys/fs/cgroup/cpu.stat
-            fi
-            if [[ -r /sys/fs/cgroup/memory.current ]]; then
-              echo "memory.current=$$(cat /sys/fs/cgroup/memory.current)"
-            fi
-            if [[ -r /sys/fs/cgroup/pids.current ]]; then
-              echo "pids.current=$$(cat /sys/fs/cgroup/pids.current)"
-            fi
-          - |
-            # Temporary PR #9128 isolation: retain the passed I2VA result from
-            # AMD build #14329 and collect only the stalled Ref2VA node.
-            node="tests/e2e/accuracy/minimax_h3/test_minimax_h3_i2va_ref2va_similarity.py::test_minimax_h3_ref2va_matches_official_reference"
-            pytest --collect-only -q "$$node" \
+            nodes=(
+              "tests/e2e/accuracy/minimax_h3/test_minimax_h3_i2va_ref2va_similarity.py::test_minimax_h3_i2va_matches_official_reference"
+              "tests/e2e/accuracy/minimax_h3/test_minimax_h3_i2va_ref2va_similarity.py::test_minimax_h3_ref2va_matches_official_reference"
+            )
+            pytest --collect-only -q "$${nodes[@]}" \
               -m "full_model and diffusion and rocm and MI325 and cards_4" --run-level full_model \
               > "$$ROCM_MINIMAX_H3_I2VA_ARTIFACT_DIR/collection.txt"
             count=$$(awk '/::/ { n++ } END { print n + 0 }' \
               "$$ROCM_MINIMAX_H3_I2VA_ARTIFACT_DIR/collection.txt")
-            if [[ "$$count" != 1 ]]; then
-              echo "Expected exactly one MiniMax-H3 Ref2VA diagnostic node, found $$count." >&2
+            if [[ "$$count" != "$${#nodes[@]}" ]]; then
+              echo "Expected exactly $${#nodes[@]} MiniMax-H3 I2VA/Ref2VA nodes, found $$count." >&2
               cat "$$ROCM_MINIMAX_H3_I2VA_ARTIFACT_DIR/collection.txt" >&2
               exit 5
             fi
-            if ! grep -Fq "$$node" "$$ROCM_MINIMAX_H3_I2VA_ARTIFACT_DIR/collection.txt"; then
-              echo "MiniMax-H3 Ref2VA diagnostic node was not collected: $$node" >&2
-              cat "$$ROCM_MINIMAX_H3_I2VA_ARTIFACT_DIR/collection.txt" >&2
-              exit 5
-            fi
+            for node in "$${nodes[@]}"; do
+              if ! grep -Fq "$$node" "$$ROCM_MINIMAX_H3_I2VA_ARTIFACT_DIR/collection.txt"; then
+                echo "MiniMax-H3 accuracy node was not collected: $$node" >&2
+                cat "$$ROCM_MINIMAX_H3_I2VA_ARTIFACT_DIR/collection.txt" >&2
+                exit 5
+              fi
+            done
           - |
-            diagnostic_watchdog() {
-              set +e
-              local diag_dir="$$VLLM_OMNI_MINIMAX_H3_DIAG_DIR"
-              local pid_file="$$diag_dir/ffmpeg.pid"
-              local output_file="$$diag_dir/ffmpeg-output-path.txt"
-              local watchdog_log="$$diag_dir/external-watchdog.log"
-              local pid=""
-              while [[ -z "$$pid" ]]; do
-                if [[ ! -s "$$pid_file" ]]; then
-                  echo "[MiniMaxH3Watchdog] waiting_for_pid elapsed_s=$$SECONDS" | tee -a "$$watchdog_log"
-                  sleep 5
-                  continue
-                fi
-                pid=$$(tr -dc '0-9' < "$$pid_file")
-                if [[ -z "$$pid" ]]; then
-                  echo "[MiniMaxH3Watchdog] invalid_pid_file" | tee -a "$$watchdog_log"
-                  sleep 5
-                  continue
-                fi
-              done
-              local deadline=$$((SECONDS + 240))
-              echo "[MiniMaxH3Watchdog] pid_detected pid=$$pid deadline_s=240" | tee -a "$$watchdog_log"
-              while (( SECONDS < deadline )); do
-                {
-                  echo "[MiniMaxH3Watchdog] snapshot epoch=$$(date +%s) pid=$$pid"
-                  timeout 2s ps -L -o pid,tid,ppid,stat,etime,time,pcpu,psr,wchan:32,comm -p "$$pid" || true
-                  timeout 2s readlink "/proc/$$pid/exe" || true
-                  timeout 2s sh -c "tr '\\0' ' ' < /proc/$$pid/cmdline; echo" || true
-                  for proc_file in syscall wchan status io stack limits; do
-                    echo "--- /proc/$$pid/$$proc_file"
-                    timeout 2s cat "/proc/$$pid/$$proc_file" || true
-                  done
-                  echo "--- process files"
-                  timeout 2s ls -l "/proc/$$pid/fd" || true
-                  if [[ -s "$$output_file" ]]; then
-                    local prepared_path
-                    prepared_path=$$(head -n 1 "$$output_file")
-                    stat -c 'prepared path=%n size=%s blocks=%b mode=%A' "$$prepared_path" 2>&1 || true
-                  fi
-                  stat -c 'progress path=%n size=%s blocks=%b mode=%A' "$$diag_dir/ffmpeg-progress.txt" 2>&1 || true
-                  tail -n 20 "$$diag_dir/ffmpeg-progress.txt" 2>/dev/null || true
-                  stat -c 'stderr path=%n size=%s blocks=%b mode=%A' "$$diag_dir/ffmpeg-stderr.txt" 2>&1 || true
-                  tail -n 20 "$$diag_dir/ffmpeg-stderr.txt" 2>/dev/null || true
-                } 2>&1 | tee -a "$$watchdog_log"
-                if ! kill -0 "$$pid" 2>/dev/null; then
-                  echo "[MiniMaxH3Watchdog] child_exited pid=$$pid" | tee -a "$$watchdog_log"
-                  return
-                fi
-                sleep 10
-              done
-              echo "[MiniMaxH3Watchdog] deadline_reached" | tee -a "$$watchdog_log"
-            }
-
-            diagnostic_watchdog &
-            watchdog_pid=$$!
             set +e
-            node="tests/e2e/accuracy/minimax_h3/test_minimax_h3_i2va_ref2va_similarity.py::test_minimax_h3_ref2va_matches_official_reference"
-            timeout --signal=TERM --kill-after=2m 90m \
-              pytest -s -vv "$$node" \
+            nodes=(
+              "tests/e2e/accuracy/minimax_h3/test_minimax_h3_i2va_ref2va_similarity.py::test_minimax_h3_i2va_matches_official_reference"
+              "tests/e2e/accuracy/minimax_h3/test_minimax_h3_i2va_ref2va_similarity.py::test_minimax_h3_ref2va_matches_official_reference"
+            )
+            timeout --signal=TERM --kill-after=2m 165m \
+              pytest -s -v "$${nodes[@]}" \
               -m "full_model and diffusion and rocm and MI325 and cards_4" --run-level full_model \
               --junitxml="$$ROCM_MINIMAX_H3_I2VA_ARTIFACT_DIR/pytest.xml" \
               2>&1 | tee "$$ROCM_MINIMAX_H3_I2VA_ARTIFACT_DIR/pytest.log"
             status=$${PIPESTATUS[0]}
-            kill "$$watchdog_pid" 2>/dev/null || true
-            wait "$$watchdog_pid" 2>/dev/null || true
             set -e
             if [[ -d tests/e2e/accuracy/artifacts ]]; then
               mkdir -p "$$ROCM_MINIMAX_H3_I2VA_ARTIFACT_DIR/accuracy"
