@@ -113,7 +113,13 @@ def _diagnostic_stage(stage: str, started_at: float | None = None, **details: An
 
 def _run_ffprobe(command: list[str], *, path: str, probe_kind: str) -> subprocess.CompletedProcess[str]:
     if not _diagnostic_enabled():
-        return subprocess.run(command, check=True, capture_output=True, text=True)
+        return subprocess.run(
+            command,
+            check=True,
+            capture_output=True,
+            text=True,
+            stdin=subprocess.DEVNULL,
+        )
 
     started_at = _diagnostic_stage(
         "ffprobe.begin",
@@ -122,7 +128,14 @@ def _run_ffprobe(command: list[str], *, path: str, probe_kind: str) -> subproces
         source_bytes=os.path.getsize(path),
     )
     try:
-        result = subprocess.run(command, check=True, capture_output=True, text=True, timeout=120)
+        result = subprocess.run(
+            command,
+            check=True,
+            capture_output=True,
+            text=True,
+            stdin=subprocess.DEVNULL,
+            timeout=120,
+        )
     except subprocess.TimeoutExpired:
         _diagnostic_stage("ffprobe.timeout", started_at, path=path, probe_kind=probe_kind)
         raise
@@ -352,6 +365,7 @@ def _probe_audio(path: str) -> dict[str, Any]:
         check=True,
         capture_output=True,
         text=True,
+        stdin=subprocess.DEVNULL,
     )
     probe = json.loads(result.stdout)
     streams = [stream for stream in probe.get("streams", []) if stream.get("codec_type") == "audio"]
@@ -672,6 +686,7 @@ def _decode_video_frames_ffmpeg(
     output_frame_count = frame_count if indices is None else len(indices)
     command = [
         "ffmpeg",
+        "-nostdin",
         "-loglevel",
         "error",
         "-threads",
@@ -702,6 +717,7 @@ def _decode_video_frames_ffmpeg(
         command,
         check=True,
         capture_output=True,
+        stdin=subprocess.DEVNULL,
     )
     frame_size = width * height * 3
     expected_size = output_frame_count * frame_size
@@ -805,6 +821,7 @@ def load_audio_file(path: str) -> tuple[torch.Tensor, int]:
             subprocess.run(
                 [
                     "ffmpeg",
+                    "-nostdin",
                     "-y",
                     "-loglevel",
                     "error",
@@ -816,6 +833,7 @@ def load_audio_file(path: str) -> tuple[torch.Tensor, int]:
                     wav,
                 ],
                 check=True,
+                stdin=subprocess.DEVNULL,
             )
             return _soundfile_to_waveform(wav)
 
@@ -835,6 +853,7 @@ def load_video_audio(
         output = str(Path(tmpdir) / "audio.wav")
         command = [
             "ffmpeg",
+            "-nostdin",
             "-y",
             "-loglevel",
             "error",
@@ -853,7 +872,12 @@ def load_video_audio(
         if duration_seconds is not None:
             command.extend(["-t", f"{float(duration_seconds):.6f}"])
         command.append(output)
-        subprocess.run(command, check=True, timeout=_AUDIO_EXTRACTION_TIMEOUT_SECONDS)
+        subprocess.run(
+            command,
+            check=True,
+            stdin=subprocess.DEVNULL,
+            timeout=_AUDIO_EXTRACTION_TIMEOUT_SECONDS,
+        )
         return load_audio_file(output)
 
 
