@@ -123,7 +123,7 @@ def _model_name(model_env_var: str = MODEL_ENV_VAR, component: str = "FL2VA") ->
 
 
 def _server_args() -> list[str]:
-    return [
+    args = [
         "--trust-remote-code",
         # Both official-reference requests use fixed shapes. Keep regional
         # compilation static so cold Inductor codegen is stable across CI nodes.
@@ -134,26 +134,33 @@ def _server_args() -> list[str]:
         "4",
         "--ring",
         "1",
-        "--use-hsdp",
-        "--hsdp-shard-size",
-        "4",
-        # Avoid four independent full-checkpoint loads in the shared pod: rank 0
-        # loads once and broadcasts the weights to the other HSDP ranks. Keep the
-        # rank-0 reads sequential to bound transient host-memory pressure too.
-        "--enable-broadcast-weight-load",
-        "--disable-multithread-weight-load",
-        "--text-encoder-tp-size",
-        "4",
-        "--vae-patch-parallel-size",
-        "4",
-        "--vae-parallel-mode",
-        "tile",
-        "--vae-use-tiling",
-        "--stage-init-timeout",
-        str(ENGINE_INIT_TIMEOUT_SECONDS),
-        "--init-timeout",
-        str(ENGINE_INIT_TIMEOUT_SECONDS),
     ]
+    if torch.version.hip is None:
+        # Preserve the CUDA configuration qualified by build #17716. H100 needs
+        # the four-way HSDP shard to leave enough memory for generation.
+        args.extend(["--use-hsdp", "--hsdp-shard-size", "4"])
+    else:
+        # The FL2VA checkpoint is about 62 GiB, which fits on each MI325 GPU.
+        # Loading directly onto the accelerators avoids the full CPU-resident
+        # model copy held by every HSDP worker. Sequential reads also bound the
+        # remaining per-rank safetensors staging memory in the shared pod.
+        args.append("--disable-multithread-weight-load")
+    args.extend(
+        [
+            "--text-encoder-tp-size",
+            "4",
+            "--vae-patch-parallel-size",
+            "4",
+            "--vae-parallel-mode",
+            "tile",
+            "--vae-use-tiling",
+            "--stage-init-timeout",
+            str(ENGINE_INIT_TIMEOUT_SECONDS),
+            "--init-timeout",
+            str(ENGINE_INIT_TIMEOUT_SECONDS),
+        ]
+    )
+    return args
 
 
 def _download_reference_asset(
