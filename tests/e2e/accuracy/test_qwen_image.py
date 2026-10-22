@@ -34,16 +34,16 @@ TRUE_CFG_SCALE = 4.0
 SEED = 42
 # H100 #17798, eager TORCH_SDPA vs Diffusers native: SSIM 0.989517 / PSNR 34.677647.
 # A3 #9532 and #9545: SSIM 0.955357 / PSNR 27.170992.
-# MI325 #14276 measured SSIM 0.948268 / PSNR 26.439711 before eager was
-# standardized. Keep each accelerator's gate separate rather than weakening
-# the CUDA contract; the refreshed MI325 nightly supplies eager measurements.
+# MI325 #14411, eager TORCH_SDPA vs Diffusers native: SSIM 0.962854 /
+# PSNR 28.407295. Keep each accelerator's gate separate rather than weakening
+# the CUDA contract; bounds sit below the exact eager measurements.
 # B200 has no eager measurement yet and uses the H100 bounds.
 _CUDA_SSIM_THRESHOLD = 0.98
 _CUDA_PSNR_THRESHOLD = 34.6
 _NPU_SSIM_THRESHOLD = 0.95
 _NPU_PSNR_THRESHOLD = 27.0
-_ROCM_SSIM_THRESHOLD = 0.92
-_ROCM_PSNR_THRESHOLD = 24.0
+_ROCM_SSIM_THRESHOLD = 0.95
+_ROCM_PSNR_THRESHOLD = 27.0
 
 PROMPT_PIXELWISE = (
     "A 20-year-old East Asian girl with delicate, charming features and large, bright brown eyes—expressive and "
@@ -69,14 +69,14 @@ TRUE_CFG_SCALE_PIXELWISE = 4.0
 SEED_PIXELWISE = 42
 # H100 #17798 at 1664x928: mean abs 4.108345e-03, p99 3.529412e-02.
 # A3 #9545 at 768x432: mean abs 1.399533e-02, p99 1.882353e-01.
-# MI325 initially uses the prior Qwen-Image-2512 diagnostic bounds; the new
-# base-model eager run prints the exact metrics so these can be recalibrated.
+# MI325 #14411 at 1664x928: mean abs 1.401817e-02, p99 1.490196e-01.
+# Bounds sit above those errors with margin for run-to-run variation.
 _CUDA_MEAN_ABS_DIFF_THRESHOLD_PIXELWISE = 1e-2
 _CUDA_P99_ABS_DIFF_THRESHOLD_PIXELWISE = 5e-2
 _NPU_MEAN_ABS_DIFF_THRESHOLD_PIXELWISE = 2e-2
 _NPU_P99_ABS_DIFF_THRESHOLD_PIXELWISE = 2.5e-1
-_ROCM_MEAN_ABS_DIFF_THRESHOLD_PIXELWISE = 3e-2
-_ROCM_P99_ABS_DIFF_THRESHOLD_PIXELWISE = 4e-1
+_ROCM_MEAN_ABS_DIFF_THRESHOLD_PIXELWISE = 2e-2
+_ROCM_P99_ABS_DIFF_THRESHOLD_PIXELWISE = 2e-1
 
 
 def _pixelwise_size() -> tuple[int, int]:
