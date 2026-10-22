@@ -785,20 +785,23 @@ steps:
               local pid_file="$$diag_dir/ffmpeg.pid"
               local output_file="$$diag_dir/ffmpeg-output-path.txt"
               local watchdog_log="$$diag_dir/external-watchdog.log"
-              local deadline=$$((SECONDS + 240))
-              while (( SECONDS < deadline )); do
+              local pid=""
+              while [[ -z "$$pid" ]]; do
                 if [[ ! -s "$$pid_file" ]]; then
                   echo "[MiniMaxH3Watchdog] waiting_for_pid elapsed_s=$$SECONDS" | tee -a "$$watchdog_log"
                   sleep 5
                   continue
                 fi
-                local pid
                 pid=$$(tr -dc '0-9' < "$$pid_file")
                 if [[ -z "$$pid" ]]; then
                   echo "[MiniMaxH3Watchdog] invalid_pid_file" | tee -a "$$watchdog_log"
                   sleep 5
                   continue
                 fi
+              done
+              local deadline=$$((SECONDS + 240))
+              echo "[MiniMaxH3Watchdog] pid_detected pid=$$pid deadline_s=240" | tee -a "$$watchdog_log"
+              while (( SECONDS < deadline )); do
                 {
                   echo "[MiniMaxH3Watchdog] snapshot epoch=$$(date +%s) pid=$$pid"
                   timeout 2s ps -L -o pid,tid,ppid,stat,etime,time,pcpu,psr,wchan:32,comm -p "$$pid" || true

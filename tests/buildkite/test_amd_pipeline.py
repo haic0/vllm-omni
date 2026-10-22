@@ -1169,6 +1169,8 @@ def test_minimax_h3_accuracy_has_two_nonblocking_nightly_jobs() -> None:
     assert "diagnostic_watchdog" in i2va_commands
     assert "/proc/$$pid/syscall" in i2va_commands
     assert "external-watchdog.log" in i2va_commands
+    assert i2va_commands.index('while [[ -z "$$pid" ]]') < i2va_commands.index("local deadline=$$((SECONDS + 240))")
+    assert "pid_detected pid=$$pid deadline_s=240" in i2va_commands
     assert "test_minimax_h3_i2va_matches_official_reference" not in i2va_commands
     assert "test_minimax_h3_ref2va_matches_official_reference" in i2va_commands
     assert "Expected exactly one MiniMax-H3 Ref2VA diagnostic node" in i2va_commands
