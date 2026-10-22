@@ -154,7 +154,7 @@ def _inline_daily_omni_media(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 @requires_daily_omni_deps
-@hardware_test(res={"cuda": ["H100", "B200"], "npu": "A3"}, num_cards=1)
+@hardware_test(res={"cuda": ["H100", "B200"], "npu": "A3", "rocm": "MI325"}, num_cards=1)
 @pytest.mark.parametrize("omni_server", daily_test_params, indirect=True)
 def test_minicpmo_4_5_daily_omni_accuracy_bench(omni_server) -> None:
     _require_vllm_cli()
@@ -215,13 +215,13 @@ def _run_seed_tts_wer_bench(omni_server) -> None:
     assert _acc_bench.run_acc_benchmark(_acc_bench.parse_acc_benchmark_args(argv)) == 0
 
 
-@hardware_test(res={"cuda": ["H100", "B200"], "npu": "A3"}, num_cards=1)
+@hardware_test(res={"cuda": ["H100", "B200"], "npu": "A3", "rocm": "MI325"}, num_cards=1)
 @pytest.mark.parametrize("omni_server", seed_test_params, indirect=True)
 def test_minicpmo_4_5_seed_tts_wer_bench(omni_server) -> None:
     _run_seed_tts_wer_bench(omni_server)
 
 
-@hardware_test(res={"cuda": ["H100", "B200"]}, num_cards=1)
+@hardware_test(res={"cuda": ["H100", "B200"], "rocm": "MI325"}, num_cards=1)
 @pytest.mark.parametrize("omni_server", seed_bf16_attention_cache_test_params, indirect=True)
 def test_minicpmo_4_5_seed_tts_wer_bench_bf16_attention_cache(omni_server) -> None:
     """Same Seed-TTS gate with the Code2Wav bfloat16 attention cache enabled."""
