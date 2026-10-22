@@ -559,14 +559,16 @@ def discover_build_sources(
     try:
         listing = fetch(f"{BUILDKITE_PIPELINE_URL}/builds?{query}")
     except (OSError, UnicodeError, ValueError, urllib.error.URLError) as exc:
-        log(f"could not query Buildkite artifacts for {commit[:12]}: {exc}")
+        # Commit and branch identify the trusted parent. Leave both, and the
+        # exception text, out of the log: URLError includes the request URL.
+        log(f"could not query Buildkite artifacts: {_error_type(exc)}")
         return []
     sources: list[BuildSource] = []
     for number in _build_numbers_from_listing(listing)[:10]:
         try:
             details = json.loads(fetch(f"{BUILDKITE_PIPELINE_URL}/builds/{number}.json"))
         except (json.JSONDecodeError, OSError, UnicodeError, ValueError, urllib.error.URLError) as exc:
-            log(f"could not verify Buildkite build #{number}: {exc}")
+            log(f"could not verify Buildkite build #{number}: {_error_type(exc)}")
             continue
         if not isinstance(details, dict):
             continue
@@ -600,7 +602,7 @@ def discover_recent_branch_sources(
     try:
         listing = fetch(f"{BUILDKITE_PIPELINE_URL}/builds?{query}")
     except (OSError, UnicodeError, ValueError, urllib.error.URLError) as exc:
-        log(f"could not query recent Buildkite builds for {branch}: {_error_type(exc)}")
+        log(f"could not query recent Buildkite builds: {_error_type(exc)}")
         return []
     sources: list[BuildSource] = []
     for number in _build_numbers_from_listing(listing)[:limit]:

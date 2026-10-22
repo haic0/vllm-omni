@@ -487,17 +487,30 @@ def test_discover_recent_branch_sources_skips_prs_and_current_build() -> None:
     assert sources == [cache.BuildSource("build-main", 14019, recent, "main", "", False)]
 
 
-def test_recent_branch_query_failure_does_not_log_url_credentials(capsys: pytest.CaptureFixture[str]) -> None:
-    secret = "secret-token"
+def test_query_failure_does_not_log_request_url_or_parent_commit(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    marker = "a" * 40
 
     def fetch(url: str) -> str:
-        raise urllib.error.URLError(f"http://user:{secret}@{url}")
+        raise urllib.error.URLError(f"http://user:embedded-userinfo@{url}")
 
-    sources = cache.discover_recent_branch_sources(branch="main", current_build_id="current", fetch=fetch)
+    recent = cache.discover_recent_branch_sources(
+        branch="main",
+        current_build_id="current",
+        fetch=fetch,
+    )
+    sources = cache.candidate_sources(
+        _env(VLLM_OMNI_AITER_MHA_TRUSTED_COMMIT=marker),
+        fetch=fetch,
+    )
 
+    assert recent == []
     assert sources == []
     captured = capsys.readouterr()
-    assert secret not in captured.err
+    assert marker not in captured.err
+    assert "embedded-userinfo" not in captured.err
+    assert "http://" not in captured.err
     assert "URLError" in captured.err
 
 
