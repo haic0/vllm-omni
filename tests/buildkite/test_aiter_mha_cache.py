@@ -10,6 +10,7 @@ import json
 import shutil
 import subprocess
 import sys
+import urllib.error
 from pathlib import Path
 
 import pytest
@@ -484,6 +485,20 @@ def test_discover_recent_branch_sources_skips_prs_and_current_build() -> None:
     )
 
     assert sources == [cache.BuildSource("build-main", 14019, recent, "main", "", False)]
+
+
+def test_recent_branch_query_failure_does_not_log_url_credentials(capsys: pytest.CaptureFixture[str]) -> None:
+    secret = "secret-token"
+
+    def fetch(url: str) -> str:
+        raise urllib.error.URLError(f"http://user:{secret}@{url}")
+
+    sources = cache.discover_recent_branch_sources(branch="main", current_build_id="current", fetch=fetch)
+
+    assert sources == []
+    captured = capsys.readouterr()
+    assert secret not in captured.err
+    assert "URLError" in captured.err
 
 
 def test_candidate_sources_queries_the_pr_head_not_the_test_merge_commit() -> None:
