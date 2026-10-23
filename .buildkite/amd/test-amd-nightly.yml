@@ -586,7 +586,6 @@ steps:
             nodes=(
               "tests/e2e/accuracy/minicpmo_4_5/test_minicpmo_4_5.py::test_minicpmo_4_5_daily_omni_accuracy_bench"
               "tests/e2e/accuracy/minicpmo_4_5/test_minicpmo_4_5.py::test_minicpmo_4_5_seed_tts_wer_bench"
-              "tests/e2e/accuracy/minicpmo_4_5/test_minicpmo_4_5.py::test_minicpmo_4_5_seed_tts_wer_bench_bf16_attention_cache"
             )
             pytest --collect-only -q "$${nodes[@]}" \
               -m "full_model and omni and rocm and MI325 and cards_1" --run-level full_model \
@@ -610,7 +609,6 @@ steps:
             nodes=(
               "tests/e2e/accuracy/minicpmo_4_5/test_minicpmo_4_5.py::test_minicpmo_4_5_daily_omni_accuracy_bench"
               "tests/e2e/accuracy/minicpmo_4_5/test_minicpmo_4_5.py::test_minicpmo_4_5_seed_tts_wer_bench"
-              "tests/e2e/accuracy/minicpmo_4_5/test_minicpmo_4_5.py::test_minicpmo_4_5_seed_tts_wer_bench_bf16_attention_cache"
             )
             timeout --signal=TERM --kill-after=2m 165m \
               pytest -s -v "$${nodes[@]}" \

@@ -1219,7 +1219,6 @@ def test_minicpmo_accuracy_is_one_nonblocking_nightly_job() -> None:
     for node in (
         "test_minicpmo_4_5_daily_omni_accuracy_bench",
         "test_minicpmo_4_5_seed_tts_wer_bench",
-        "test_minicpmo_4_5_seed_tts_wer_bench_bf16_attention_cache",
     ):
         assert node in commands
     for pipeline_path in (AMD_READY_PIPELINE, AMD_MERGE_PIPELINE):

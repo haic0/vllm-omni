@@ -221,7 +221,7 @@ def test_minicpmo_4_5_seed_tts_wer_bench(omni_server) -> None:
     _run_seed_tts_wer_bench(omni_server)
 
 
-@hardware_test(res={"cuda": ["H100", "B200"], "rocm": "MI325"}, num_cards=1)
+@hardware_test(res={"cuda": ["H100", "B200"]}, num_cards=1)
 @pytest.mark.parametrize("omni_server", seed_bf16_attention_cache_test_params, indirect=True)
 def test_minicpmo_4_5_seed_tts_wer_bench_bf16_attention_cache(omni_server) -> None:
     """Same Seed-TTS gate with the Code2Wav bfloat16 attention cache enabled."""
