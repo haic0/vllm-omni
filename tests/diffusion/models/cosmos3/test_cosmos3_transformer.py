@@ -535,6 +535,7 @@ def test_edge_validates_required_relu2_weights() -> None:
 
 
 def test_edge_weight_validation_skips_pp_missing_layers() -> None:
+    from vllm.model_executor.models import utils as model_utils
     from vllm.model_executor.models.utils import PPMissingLayer
 
     from vllm_omni.diffusion.models.cosmos3.transformer_cosmos3_edge import (
@@ -557,6 +558,10 @@ def test_edge_weight_validation_skips_pp_missing_layers() -> None:
 
     first_stage = _make_stage(first=True)
     last_stage = _make_stage(first=False)
+
+    # A discarded model can leave an empty cache entry under the same id.
+    model_utils._model_to_pp_missing_layer_names[id(first_stage)] = []
+    model_utils._model_to_pp_missing_layer_names[id(last_stage)] = []
 
     first_loaded = {
         f"transformer.language_model.layers.{i}.{suffix}.weight"
