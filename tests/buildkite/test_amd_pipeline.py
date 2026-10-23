@@ -1244,6 +1244,8 @@ def test_qwen_image_21_accuracy_is_one_nonblocking_nightly_job() -> None:
     assert "test_qwen_image_21_matches_reference[it2i]" in commands
     assert "test_qwen_image_21_matches_reference[t2i]" in commands
     assert "Expected exactly $${#nodes[@]} Qwen-Image 2.1 accuracy nodes" in commands
+    accuracy_test = Path("tests/e2e/accuracy/qwen_image_21/test_qwen_image_21.py").read_text(encoding="utf-8")
+    assert 'os.environ.get("BUILDKITE_COMMIT")' in accuracy_test
     for pipeline_path in (AMD_READY_PIPELINE, AMD_MERGE_PIPELINE):
         text = pipeline_path.read_text(encoding="utf-8")
         assert "Qwen-Image 2.1 Accuracy" not in text

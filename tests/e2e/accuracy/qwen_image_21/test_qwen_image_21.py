@@ -112,6 +112,26 @@ def _reference(request_path: Path, output: Path, *, preflight: bool, repeats: in
     return json.loads((output / "reference_preflight.json").read_text(encoding="utf-8"))
 
 
+def _source_provenance() -> dict[str, str]:
+    try:
+        return {
+            "git_head": subprocess.check_output(
+                ["git", "rev-parse", "HEAD"], cwd=ROOT, text=True, stderr=subprocess.DEVNULL
+            ).strip(),
+            "git_status": subprocess.check_output(
+                ["git", "status", "--short"], cwd=ROOT, text=True, stderr=subprocess.DEVNULL
+            ),
+        }
+    except (OSError, subprocess.CalledProcessError):
+        buildkite_commit = os.environ.get("BUILDKITE_COMMIT")
+        if not buildkite_commit:
+            raise RuntimeError("Cannot identify the tested source: no Git checkout or BUILDKITE_COMMIT") from None
+        return {
+            "git_head": buildkite_commit,
+            "git_status": "unavailable: repository metadata is not mounted",
+        }
+
+
 def _native(request: dict, output: Path) -> None:
     payload = {
         "prompt": request["prompt"],
@@ -134,8 +154,7 @@ def _native(request: dict, output: Path) -> None:
             "serve_args": serve_args,
             "request": payload,
             "python": sys.executable,
-            "git_head": subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip(),
-            "git_status": subprocess.check_output(["git", "status", "--short"], cwd=ROOT, text=True),
+            **_source_provenance(),
             "versions": {name: version(name) for name in ("vllm", "diffusers", "torch", "transformers", "Pillow")},
         },
     )
