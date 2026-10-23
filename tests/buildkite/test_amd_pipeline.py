@@ -1218,9 +1218,9 @@ def test_voxtral_tts_perf_is_one_nonblocking_nightly_job() -> None:
     assert "tests/dfx/perf/tests/test_tts.json" in commands
     assert "Expected exactly $${#nodes[@]} Voxtral TTS perf nodes" in commands
     nodes = (
-        "test_voxtral_tts-default_voice_latency",
-        "test_voxtral_tts-default_voice_throughput",
-        "test_voxtral_tts-default_voice_stress",
+        "test_voxtral_tts-default_voice_latency_seed-tts-text",
+        "test_voxtral_tts-default_voice_throughput_seed-tts-text",
+        "test_voxtral_tts-default_voice_stress_seed-tts-text",
     )
     for node in nodes:
         assert commands.count(node) == 2
