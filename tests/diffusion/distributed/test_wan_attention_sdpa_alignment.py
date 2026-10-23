@@ -171,6 +171,14 @@ def _reference_attention(block: nn.Module, hidden: torch.Tensor) -> torch.Tensor
     return features + identity
 
 
+def _assert_matches_unaligned_math(block: nn.Module, hidden: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+    with _math_sdpa():
+        actual = block(hidden)
+        expected = _reference_attention(block, hidden)
+    assert torch.equal(actual, expected)
+    return actual, expected
+
+
 @pytest.mark.parametrize("dtype", [torch.float32, torch.bfloat16])
 @pytest.mark.parametrize(("height", "width"), [(1, 1), (4, 9), (16, 16)])
 def test_aligned_forward_matches_unaligned_math(dtype: torch.dtype, height: int, width: int) -> None:
@@ -180,16 +188,33 @@ def test_aligned_forward_matches_unaligned_math(dtype: torch.dtype, height: int,
     install_wan_attention_sdpa_alignment(root)
     hidden = torch.randn(1, 32, 1, height, width, dtype=dtype)
 
-    with _math_sdpa():
-        actual = block(hidden)
-        expected = _reference_attention(block, hidden)
-
-    assert torch.equal(actual, expected)
+    actual, expected = _assert_matches_unaligned_math(block, hidden)
     assert actual.stride() == expected.stride()
     # A second install must leave the patched forward in place.
     forward = block.forward
     install_wan_attention_sdpa_alignment(root)
     assert block.forward is forward
+
+
+def test_math_reference_rejects_value_changing_alignment(monkeypatch) -> None:
+    """The exact comparator must reject a realignment that changes values."""
+    from vllm_omni.diffusion.distributed.autoencoders import wan_sdpa_alignment
+
+    original_align = wan_sdpa_alignment.align_sdpa_qkv
+
+    def corrupt_value(query, key, value):
+        aligned_query, aligned_key, aligned_value = original_align(query, key, value)
+        return aligned_query, aligned_key, aligned_value + 1
+
+    monkeypatch.setattr(wan_sdpa_alignment, "align_sdpa_qkv", corrupt_value)
+    torch.manual_seed(0)
+    block = WanAttentionBlock(32, torch.float32)
+    root = _Root(block)
+    install_wan_attention_sdpa_alignment(root)
+    hidden = torch.randn(1, 32, 1, 1, 1)
+
+    with pytest.raises(AssertionError):
+        _assert_matches_unaligned_math(block, hidden)
 
 
 @pytest.mark.parametrize("alignment_first", [False, True])
@@ -248,5 +273,4 @@ def test_alignment_warns_on_unverified_diffusers_version(monkeypatch, installed_
         assert "validated against diffusers 0.40.0" in str(recorded[0].message)
         assert installed_version in str(recorded[0].message)
     hidden = torch.randn(1, 32, 1, 1, 1)
-    with _math_sdpa():
-        assert torch.equal(root.block(hidden), _reference_attention(root.block, hidden))
+    _assert_matches_unaligned_math(root.block, hidden)
