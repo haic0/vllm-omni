@@ -14,11 +14,14 @@ kernel; they check the stride condition and that realignment preserves values.
 from __future__ import annotations
 
 import warnings
+from collections.abc import Iterator
+from contextlib import contextmanager
 
 import pytest
 import torch
 import torch.nn.functional as F
 from torch import nn
+from torch.nn.attention import SDPBackend, sdpa_kernel
 
 from vllm_omni.diffusion.distributed.autoencoders.wan_sdpa_alignment import (
     align_sdpa_qkv,
@@ -142,6 +145,18 @@ class _Root(nn.Module):
         self.block = block
 
 
+@contextmanager
+def _math_sdpa() -> Iterator[None]:
+    """Compare attention values with the math kernel.
+
+    ROCm's default SDPA is not bitwise identical for a misaligned 1x1 query
+    and the repacked copy. These checks verify that realignment preserves
+    values, not that a vendor kernel is layout-invariant.
+    """
+    with sdpa_kernel(SDPBackend.MATH):
+        yield
+
+
 def _reference_attention(block: nn.Module, hidden: torch.Tensor) -> torch.Tensor:
     """Diffusers' attention math on the raw, possibly misaligned QKV views."""
     identity = hidden
@@ -165,8 +180,9 @@ def test_aligned_forward_matches_unaligned_math(dtype: torch.dtype, height: int,
     install_wan_attention_sdpa_alignment(root)
     hidden = torch.randn(1, 32, 1, height, width, dtype=dtype)
 
-    actual = block(hidden)
-    expected = _reference_attention(block, hidden)
+    with _math_sdpa():
+        actual = block(hidden)
+        expected = _reference_attention(block, hidden)
 
     assert torch.equal(actual, expected)
     assert actual.stride() == expected.stride()
@@ -232,4 +248,5 @@ def test_alignment_warns_on_unverified_diffusers_version(monkeypatch, installed_
         assert "validated against diffusers 0.40.0" in str(recorded[0].message)
         assert installed_version in str(recorded[0].message)
     hidden = torch.randn(1, 32, 1, 1, 1)
-    assert torch.equal(root.block(hidden), _reference_attention(root.block, hidden))
+    with _math_sdpa():
+        assert torch.equal(root.block(hidden), _reference_attention(root.block, hidden))
