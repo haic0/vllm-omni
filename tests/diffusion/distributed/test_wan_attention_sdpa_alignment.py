@@ -142,6 +142,15 @@ class _Root(nn.Module):
         self.block = block
 
 
+def _assert_sdpa_output_close(actual: torch.Tensor, expected: torch.Tensor) -> None:
+    """Repacked QKV can change SDPA floating-point order.
+
+    AMD builds agree to four decimal places and are not bitwise identical.
+    Q/K/V value checks stay on ``torch.equal``.
+    """
+    torch.testing.assert_close(actual, expected, rtol=1e-4, atol=1e-4)
+
+
 def _reference_attention(block: nn.Module, hidden: torch.Tensor) -> torch.Tensor:
     """Diffusers' attention math on the raw, possibly misaligned QKV views."""
     identity = hidden
@@ -168,7 +177,7 @@ def test_aligned_forward_matches_unaligned_math(dtype: torch.dtype, height: int,
     actual = block(hidden)
     expected = _reference_attention(block, hidden)
 
-    assert torch.equal(actual, expected)
+    _assert_sdpa_output_close(actual, expected)
     assert actual.stride() == expected.stride()
     # A second install must leave the patched forward in place.
     forward = block.forward
@@ -232,4 +241,4 @@ def test_alignment_warns_on_unverified_diffusers_version(monkeypatch, installed_
         assert "validated against diffusers 0.40.0" in str(recorded[0].message)
         assert installed_version in str(recorded[0].message)
     hidden = torch.randn(1, 32, 1, 1, 1)
-    assert torch.equal(root.block(hidden), _reference_attention(root.block, hidden))
+    _assert_sdpa_output_close(root.block(hidden), _reference_attention(root.block, hidden))
