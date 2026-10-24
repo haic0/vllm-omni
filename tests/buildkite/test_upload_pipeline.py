@@ -1003,8 +1003,7 @@ def test_qwen_image_21_accuracy_model_dependencies(
     step = steps[0]
     assert step["agents"]["queue"] == queue
     assert not step.get("skip")
-    expected_calibration = "1" if pipeline_path == Path(".buildkite/amd/test-amd-nightly.yml") else "0"
-    assert step["env"]["QWEN_IMAGE_21_CALIBRATE"] == expected_calibration
+    assert step["env"]["QWEN_IMAGE_21_CALIBRATE"] == "0"
     assert any("test_qwen_image_21.py" in command for command in step["commands"])
     assert any(selector in command for command in step["commands"])
     assert "tests/e2e/accuracy/artifacts/qwen_image_21/**/*" in step["artifact_paths"]

@@ -10,7 +10,7 @@ import gc
 import inspect
 import json
 import sys
-from contextlib import ExitStack, contextmanager
+from contextlib import ExitStack
 from importlib.metadata import distribution, version
 from pathlib import Path
 
@@ -23,28 +23,6 @@ from contract import (
     validate_model,
     write_json,
 )
-
-
-@contextmanager
-def _deterministic_miopen_image_encode(vae):
-    """Pin only the ROCm condition-image encode; decoder shapes need defaults."""
-    import torch
-
-    original_encode = vae.encode
-
-    def deterministic_encode(*args, **kwargs):
-        previous = torch.backends.cudnn.deterministic
-        torch.backends.cudnn.deterministic = True
-        try:
-            return original_encode(*args, **kwargs)
-        finally:
-            torch.backends.cudnn.deterministic = previous
-
-    vae.encode = deterministic_encode
-    try:
-        yield
-    finally:
-        vae.encode = original_encode
 
 
 def preflight(request: dict) -> dict:
@@ -130,8 +108,6 @@ def generate(request: dict, output: Path, repeats: int) -> None:
             torch_dtype=torch.bfloat16,
             local_files_only=True,
         ).to(torch_device)
-        if is_rocm:
-            adapters.enter_context(_deterministic_miopen_image_encode(pipe.vae))
         # Native constructs the encoder under the loader's accelerator context.
         # Recreate only non-checkpoint RoPE buffers using the reference's own
         # constructors on that device, without copying any native tensors.
@@ -198,15 +174,8 @@ def generate(request: dict, output: Path, repeats: int) -> None:
             "request": request,
         }
         if is_rocm:
-            metadata["controlled_adaptations"].update(
-                {
-                    "transformer_sdpa": "Keep upstream native SDPA. ROCm has no cuDNN attention backend.",
-                    "condition_image_encode": (
-                        "Use deterministic MIOpen convolution only while encoding condition images; "
-                        "leave VAE decode on MIOpen defaults because not every decoder shape has a "
-                        "deterministic algorithm."
-                    ),
-                }
+            metadata["controlled_adaptations"]["transformer_sdpa"] = (
+                "Keep upstream native SDPA. ROCm has no cuDNN attention backend."
             )
         elif is_cuda:
             metadata["controlled_adaptations"].update(

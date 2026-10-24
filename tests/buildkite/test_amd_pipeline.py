@@ -1238,7 +1238,7 @@ def test_qwen_image_21_accuracy_is_one_nonblocking_nightly_job() -> None:
     assert "--collect-only" in commands
     assert "exit 5" in commands
     assert "pytest.xml" in commands
-    assert step["env"]["QWEN_IMAGE_21_CALIBRATE"] == "1"
+    assert step["env"]["QWEN_IMAGE_21_CALIBRATE"] == "0"
     assert step["env"]["DIFFUSION_ATTENTION_BACKEND"] == "TORCH_SDPA"
     assert "setup_reference.sh" in commands
     assert "test_qwen_image_21_matches_reference[it2i]" in commands
