@@ -41,7 +41,7 @@ CACHE_T = 2
 
 
 @contextmanager
-def _cudnn_deterministic():
+def _cudnn_deterministic(*, include_rocm: bool = False):
     """Scope cuDNN to deterministic conv algorithms, restoring on exit.
 
     VAE decode/encode runs many odd-shaped conv3d shapes; under GPU memory
@@ -50,12 +50,12 @@ def _cudnn_deterministic():
     GPUs. Pinning deterministic algorithms removes that source of variance.
 
     ``torch.backends.cudnn`` also controls MIOpen convolution policy in ROCm
-    builds. Do not force cuDNN's deterministic policy there: MIOpen does not
-    provide a suitable deterministic algorithm for every Qwen-Image 2.1 VAE
-    shape, and the independent Diffusers reference uses MIOpen's default
-    policy as well.
+    builds. Decoder shapes do not all have a suitable deterministic MIOpen
+    algorithm, so ROCm uses the default policy unless ``include_rocm`` is set.
+    The image encoder does have a deterministic path and needs it so a seeded
+    image edit cannot change its conditioning latents from run to run.
     """
-    if torch.version.hip is not None:
+    if torch.version.hip is not None and not include_rocm:
         yield
         return
 
@@ -71,6 +71,15 @@ def _with_cudnn_deterministic(fn):
     @functools.wraps(fn)
     def wrapper(*args, **kwargs):
         with _cudnn_deterministic():
+            return fn(*args, **kwargs)
+
+    return wrapper
+
+
+def _with_deterministic_image_encode(fn):
+    @functools.wraps(fn)
+    def wrapper(*args, **kwargs):
+        with _cudnn_deterministic(include_rocm=True):
             return fn(*args, **kwargs)
 
     return wrapper
@@ -1328,7 +1337,7 @@ class AutoencoderKLQwenImage21(ModelMixin, AutoencoderMixin, ConfigMixin, FromOr
         self._enc_conv_idx = [0]
         self._enc_feat_map = [None] * self._enc_conv_num
 
-    @_with_cudnn_deterministic
+    @_with_deterministic_image_encode
     def _encode(self, x: torch.Tensor):
         _, _, num_frame, height, width = x.shape
 
@@ -1453,7 +1462,7 @@ class AutoencoderKLQwenImage21(ModelMixin, AutoencoderMixin, ConfigMixin, FromOr
             )
         return b
 
-    @_with_cudnn_deterministic
+    @_with_deterministic_image_encode
     def tiled_encode(self, x: torch.Tensor) -> AutoencoderKLOutput:
         r"""Encode a batch of images using a tiled encoder.
 

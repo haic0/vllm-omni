@@ -65,6 +65,16 @@ def test_miopen_keeps_default_convolution_policy(monkeypatch):
     assert vae_module.torch.backends.cudnn.deterministic is False
 
 
+def test_miopen_image_encode_scope_is_deterministic(monkeypatch):
+    from vllm_omni.diffusion.models.qwen_image_21 import autoencoder_kl_qwenimage21 as vae_module
+
+    monkeypatch.setattr(vae_module.torch.version, "hip", "6.4")
+    monkeypatch.setattr(vae_module.torch.backends.cudnn, "deterministic", False)
+    with vae_module._cudnn_deterministic(include_rocm=True):
+        assert vae_module.torch.backends.cudnn.deterministic is True
+    assert vae_module.torch.backends.cudnn.deterministic is False
+
+
 def test_spatial_compression_ratio_derived_from_architecture():
     # One 2x downsampling stage per `temperal_downsample` entry.
     vae = _make_vae()
