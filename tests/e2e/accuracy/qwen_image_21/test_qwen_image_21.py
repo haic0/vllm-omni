@@ -22,8 +22,10 @@ observed baseline and selection limits. CUDA retains cuDNN and CUDA RNG.
 NPU calibration does not establish CUDA thresholds.
 
 Normal execution enforces the user-selected bounds in thresholds.json with one
-reference generation. Set QWEN_IMAGE_21_CALIBRATE=1 to generate two references
-and collect calibration evidence without enforcing bounds; this reports XFAIL.
+reference generation. A documented expected-XFAIL profile still executes both
+runtimes and retains metrics/artifacts, but does not claim a pixel-accuracy pass.
+Set QWEN_IMAGE_21_CALIBRATE=1 to generate two references and collect calibration
+evidence without enforcing bounds; this reports XFAIL.
 """
 
 from __future__ import annotations
@@ -214,6 +216,12 @@ def test_qwen_image_21_matches_reference(accuracy_artifact_root: Path, run_level
     device = device_preflight(device_type)
     device_name = device["device"]
     profile = resolve_device_profile(device_name, profiles=bounds)
+    xfail_profiles = policy.get("expected_xfail", {}).get(case_name, {})
+    xfail_profile = resolve_device_profile(device_name, profiles=xfail_profiles)
+    expected_xfail = xfail_profiles.get(xfail_profile)
+    if expected_xfail:
+        assert isinstance(expected_xfail, str) and expected_xfail
+        assert f"{xfail_profile}.{case_name}" in policy["calibration_notes"]
     if not calibration:
         assert policy["status"] == "selected", (
             "No user-selected Qwen-Image 2.1 gate. Select bounds in thresholds.json after calibration; "
@@ -319,6 +327,8 @@ def test_qwen_image_21_matches_reference(accuracy_artifact_root: Path, run_level
             "profile": profile,
             "threshold_status": policy["status"],
             "resolved_bounds": bounds.get(profile, bounds["default"]),
+            "expected_xfail_profile": xfail_profile if expected_xfail else None,
+            "expected_xfail_reason": expected_xfail,
             "calibration_only": calibration,
             "reference_generations": reference_repeats,
             "representation": "RGBA uint8 / 255, no compositing or resizing",
@@ -331,6 +341,8 @@ def test_qwen_image_21_matches_reference(accuracy_artifact_root: Path, run_level
     )
     if calibration:
         pytest.xfail(f"Calibration collected; thresholds were not enforced. Metrics: {output / 'metrics.json'}")
+    if expected_xfail:
+        pytest.xfail(f"{expected_xfail} Metrics: {output / 'metrics.json'}")
     assert selected is not None
     assert_similarity_metrics(
         model_name=f"Qwen-Image 2.1 {case_name}; artifacts: {output}",
