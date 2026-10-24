@@ -69,10 +69,21 @@ def device_preflight(device_type: str) -> dict:
     accelerator = getattr(torch, torch_device)
     assert accelerator.is_available(), f"{device_type} is required; accuracy preflight must not skip"
     assert accelerator.is_bf16_supported(), f"BF16 {device_type} hardware is required"
-    memory = accelerator.get_device_properties(0).total_memory
+    properties = accelerator.get_device_properties(0)
+    memory = properties.total_memory
+    device_name = accelerator.get_device_name(0)
+    device_arch = str(getattr(properties, "gcnArchName", "")) if device_type == "rocm" else ""
+    # Some ROCm CI images return an empty marketing name. Preserve a stable
+    # architecture identity so calibration cannot silently fall back to CUDA's
+    # default thresholds.
+    if not device_name and device_arch:
+        device_name = device_arch
     if device_type in {"cuda", "rocm"}:
         assert memory >= 70 * 1024**3, "Use one >=80 GB GPU"
-    return {"device_type": device_type, "device": accelerator.get_device_name(0), "memory_bytes": memory}
+    result = {"device_type": device_type, "device": device_name, "memory_bytes": memory}
+    if device_arch:
+        result["device_arch"] = device_arch
+    return result
 
 
 def validate_model(model: Path) -> dict:

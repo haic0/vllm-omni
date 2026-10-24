@@ -895,7 +895,7 @@ steps:
         grade: NonBlocking
         timeout_in_minutes: 180
         env:
-          QWEN_IMAGE_21_CALIBRATE: "0"
+          QWEN_IMAGE_21_CALIBRATE: "1"
           DIFFUSION_ATTENTION_BACKEND: TORCH_SDPA
         artifact_paths:
           - artifacts/rocm-qwen-image-21-accuracy/**/*
