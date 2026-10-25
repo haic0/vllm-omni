@@ -570,6 +570,7 @@ def test_residual_unit_decision_follows_the_committed_event():
 
     assert runner._residual_unit_decided([created, done, committed], 0) is False
     assert runner._residual_unit_decided([created, committed, done], 0) is False
+    assert runner._residual_unit_decided([created, committed, done], 0, settled_silence_is_terminal=True) is True
     assert runner._residual_unit_decided([created, committed, listen, done], 0) is False
     assert runner._residual_unit_decided([created, committed, done, listen], 0) is True
     assert runner._residual_unit_decided([created, committed, late_created, late_done, done], 0) is True
@@ -581,11 +582,12 @@ def test_residual_unit_decision_follows_the_committed_event():
     late_failed = {"type": "response.done", "response": {"id": "r2", "status": "failed"}}
     # Barge-in can cancel the open reply and still open the residual afterwards.
     assert runner._residual_unit_decided([created, committed, cancelled], 0) is False
-    assert runner._residual_unit_decided([created, committed, cancelled], 0, cancelled_is_terminal=True) is True
+    assert runner._residual_unit_decided([created, committed, cancelled], 0, settled_silence_is_terminal=True) is True
     assert runner._residual_unit_decided([created, committed, cancelled, late_created, late_done], 0) is True
     assert runner._residual_unit_decided([committed, late_created, late_cancelled], 0) is False
     assert (
-        runner._residual_unit_decided([committed, late_created, late_cancelled], 0, cancelled_is_terminal=True) is True
+        runner._residual_unit_decided([committed, late_created, late_cancelled], 0, settled_silence_is_terminal=True)
+        is True
     )
     # A failed reply is terminal: nothing is promoted after it.
     assert runner._residual_unit_decided([created, committed, failed], 0) is True
@@ -601,7 +603,7 @@ def test_residual_unit_decision_follows_the_committed_event():
     assert state["unfinished_response_ids"] == []
     assert state["quiet_window_satisfied"] is True
     assert state["normal_terminal_decision"] is False
-    assert state["cancelled_terminal_decision"] is True
+    assert state["settled_silence_terminal_decision"] is True
     assert state["completion_state_events"][-1] == {
         "type": "response.done",
         "response_id": "r1",
@@ -610,7 +612,10 @@ def test_residual_unit_decision_follows_the_committed_event():
 
 
 @pytest.mark.asyncio
-async def test_generate_accepts_a_settled_cancel_only_after_the_drain_timeout(tmp_path: Path, monkeypatch):
+@pytest.mark.parametrize("status", ["completed", "cancelled"])
+async def test_generate_accepts_settled_terminal_silence_only_after_the_drain_timeout(
+    tmp_path: Path, monkeypatch, status: str
+):
     import websockets
 
     timeout_observed = False
@@ -639,9 +644,7 @@ async def test_generate_accepts_a_settled_cancel_only_after_the_drain_timeout(tm
                 )
             elif event["type"] == "input_audio_buffer.commit":
                 await websocket.send(json.dumps({"type": "input_audio_buffer.committed"}))
-                await websocket.send(
-                    json.dumps({"type": "response.done", "response": {"id": "r1", "status": "cancelled"}})
-                )
+                await websocket.send(json.dumps({"type": "response.done", "response": {"id": "r1", "status": status}}))
             elif event["type"] == "session.close":
                 await websocket.send(json.dumps({"type": "session.closed"}))
                 return

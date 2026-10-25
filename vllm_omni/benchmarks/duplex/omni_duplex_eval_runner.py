@@ -355,13 +355,15 @@ def _completion_diagnostics(
         "settle_required_s": _COMPLETION_SETTLE_S,
         "quiet_window_satisfied": quiet_for_s >= _COMPLETION_SETTLE_S,
         "normal_terminal_decision": _residual_unit_decided(events, start),
-        "cancelled_terminal_decision": _residual_unit_decided(events, start, cancelled_is_terminal=True),
+        "settled_silence_terminal_decision": _residual_unit_decided(events, start, settled_silence_is_terminal=True),
         "completion_event_type_counts": event_type_counts,
         "completion_state_events": state_events,
     }
 
 
-def _residual_unit_decided(events: list[dict[str, object]], start: int, *, cancelled_is_terminal: bool = False) -> bool:
+def _residual_unit_decided(
+    events: list[dict[str, object]], start: int, *, settled_silence_is_terminal: bool = False
+) -> bool:
     """Whether the unit flushed by the commit has decided.
 
     A response created before ``input_audio_buffer.committed`` is the in-flight
@@ -370,10 +372,10 @@ def _residual_unit_decided(events: list[dict[str, object]], start: int, *, cance
     new response. A ``cancelled`` ending is not a decision either: MiniCPM-o
     barge-in cancels the open turn and the same input can still open the residual
     response after the quiet window. Only the full drain-timeout fallback may
-    opt into treating a settled cancellation as terminal. A ``failed`` ending
-    is terminal immediately. The server does not promote another unit after a
-    failure, and a failed response created after the commit is itself the
-    residual; the sample is already unsuccessful.
+    opt into treating a finished in-flight response followed by settled silence
+    as terminal. A ``failed`` ending is terminal immediately. The server does
+    not promote another unit after a failure, and a failed response created
+    after the commit is itself the residual; the sample is already unsuccessful.
     """
     committed_at = next(
         (index for index in range(start, len(events)) if events[index].get("type") == "input_audio_buffer.committed"),
@@ -429,16 +431,10 @@ def _residual_unit_decided(events: list[dict[str, object]], start: int, *, cance
             continue
         if event_type == "response.listen" and finished_open >= open_at_commit and _is_model_listen_decision(event):
             return True
-    if cancelled_is_terminal:
+    if settled_silence_is_terminal:
         if created_after and cancelled_after >= created_after:
             return True
-        if (
-            bool(open_at_commit)
-            and finished_open >= open_at_commit
-            and cancelled_open
-            and not promotes_residual
-            and not created_after
-        ):
+        if bool(open_at_commit) and finished_open >= open_at_commit and not created_after:
             return True
     return (
         bool(open_at_commit)
@@ -580,7 +576,7 @@ async def generate_sample(
             seen_activity = 0
             stable_since = time.monotonic()
 
-            def responses_finished(*, cancelled_is_terminal: bool = False) -> bool:
+            def responses_finished(*, settled_silence_is_terminal: bool = False) -> bool:
                 # The residual unit decides after input_audio_buffer.committed.
                 # A reply that was already open only promotes that unit when it
                 # completes, and Stage1 can still open a response afterwards.
@@ -598,7 +594,7 @@ async def generate_sample(
                 return _residual_unit_decided(
                     events,
                     commit_from,
-                    cancelled_is_terminal=cancelled_is_terminal,
+                    settled_silence_is_terminal=settled_silence_is_terminal,
                 )
 
             try:
@@ -614,12 +610,12 @@ async def generate_sample(
                     )
                     response_done = True
             except TimeoutError as exc:
-                # A barge-in cancellation can legally be followed by another
-                # response, so it cannot end the normal wait. Once the entire
-                # drain window has elapsed, accept a settled cancellation only
-                # when every created response is done and the usual quiet
-                # window still holds.
-                if not server_turns and responses_finished(cancelled_is_terminal=True):
+                # Finishing the in-flight reply can promote another response,
+                # so it cannot end the normal wait. Once the entire drain
+                # window has elapsed, accept settled terminal silence only when
+                # every created response is done and the usual quiet window
+                # still holds.
+                if not server_turns and responses_finished(settled_silence_is_terminal=True):
                     response_done = True
                 else:
                     drain_timeout = str(exc)

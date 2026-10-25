@@ -499,12 +499,12 @@ decide the session: completing it normally is what starts the residual unit, and
 that unit can still open a response. A cancelled reply does not decide the
 session either: barge-in cancels that turn, and the residual response can still
 open afterwards. If the full drain timeout expires with every created response
-finished, no completion activity during the same 2-second quiet window, and the
-otherwise-undecided final turn cancelled, the runner accepts that settled
-cancellation instead of reporting a drain timeout. It never takes this fallback
-during the normal wait. A failed reply does end the wait. The server does not
-promote another unit after a failure, and a failed response created after the
-commit is itself the residual. The listening outcome is
+finished, no completion activity during the same 2-second quiet window, and no
+later response open, the runner accepts the settled terminal silence after the
+in-flight reply completes or is cancelled instead of reporting a drain timeout.
+It never takes this fallback during the normal wait. A failed reply does end the
+wait. The server does not promote another unit after a failure, and a failed
+response created after the commit is itself the residual. The listening outcome is
 a session in which the model never spoke; it publishes empty judge input and
 scores 0 instead of failing on the drain timeout. The runner withholds the last
 PCM sample when the clip ends on a model-unit boundary, so the commit always
