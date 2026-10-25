@@ -71,18 +71,23 @@ def assert_accuracy_result(benchmark: dict, config: dict, *, enforce_score_floor
         "proactive_reminder",
         "post_event_reminder",
     }, "PR by_task keys mismatch"
-    if not enforce_score_floors:
-        return
-    baseline = config["baseline"]
-    for label, value, minimum, maximum in (
-        ("RTD content score", rtd.get("mean_content_score"), baseline["min_rtd_mean_content_score"], 3.0),
-        ("RTD temporal score", rtd.get("mean_avg_temporal_score"), baseline["min_rtd_mean_temporal_score"], 3.0),
-        ("PR success rate", pr.get("mean_all_success"), baseline["min_pr_mean_all_success"], 1.0),
-    ):
-        assert 0 < minimum <= maximum, f"invalid {label} threshold: {minimum}"
+    scores = (
+        ("RTD content score", rtd.get("mean_content_score"), "min_rtd_mean_content_score", 3.0),
+        ("RTD temporal score", rtd.get("mean_avg_temporal_score"), "min_rtd_mean_temporal_score", 3.0),
+        ("PR success rate", pr.get("mean_all_success"), "min_pr_mean_all_success", 1.0),
+    )
+    for label, value, _minimum_key, maximum in scores:
         assert (
             isinstance(value, (int, float))
             and not isinstance(value, bool)
             and math.isfinite(value)
-            and minimum <= value <= maximum
-        ), f"{label} {value!r} outside [{minimum}, {maximum}]"
+            and 0 <= value <= maximum
+        ), f"{label} {value!r} outside [0, {maximum}]"
+
+    if not enforce_score_floors:
+        return
+    baseline = config["baseline"]
+    for label, value, minimum_key, maximum in scores:
+        minimum = baseline[minimum_key]
+        assert 0 < minimum <= maximum, f"invalid {label} threshold: {minimum}"
+        assert value >= minimum, f"{label} {value!r} outside [{minimum}, {maximum}]"

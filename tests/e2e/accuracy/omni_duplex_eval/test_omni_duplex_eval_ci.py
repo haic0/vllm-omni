@@ -103,9 +103,32 @@ def test_fixed_quality_thresholds(result, config, section, field, value, passes)
             assert_accuracy_result(result, config)
 
 
-def test_record_only_hardware_keeps_full_validation_without_cuda_score_floors(result, config):
-    result["omni_duplex_eval"]["accuracy"]["pr"]["mean_all_success"] = 10 / 36
+@pytest.mark.parametrize(
+    "section,field",
+    [("rtd", "mean_content_score"), ("rtd", "mean_avg_temporal_score"), ("pr", "mean_all_success")],
+)
+def test_record_only_hardware_keeps_full_validation_without_cuda_score_floors(result, config, section, field):
+    result["omni_duplex_eval"]["accuracy"][section][field] = 0.0
     assert_accuracy_result(result, config, enforce_score_floors=False)
+
+
+@pytest.mark.parametrize(
+    "section,field,maximum",
+    [
+        ("rtd", "mean_content_score", 3.0),
+        ("rtd", "mean_avg_temporal_score", 3.0),
+        ("pr", "mean_all_success", 1.0),
+    ],
+)
+@pytest.mark.parametrize(
+    "invalid_value",
+    [None, True, float("nan"), float("inf"), -0.0001, pytest.param("above_maximum", id="above-domain")],
+)
+def test_record_only_hardware_rejects_invalid_scores(result, config, section, field, maximum, invalid_value):
+    value = maximum + 0.0001 if invalid_value == "above_maximum" else invalid_value
+    result["omni_duplex_eval"]["accuracy"][section][field] = value
+    with pytest.raises(AssertionError, match="outside"):
+        assert_accuracy_result(result, config, enforce_score_floors=False)
 
 
 @pytest.mark.parametrize(
