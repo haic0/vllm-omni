@@ -8,6 +8,7 @@ import asyncio
 import base64
 import json
 import threading
+import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
@@ -589,6 +590,23 @@ def test_residual_unit_decision_follows_the_committed_event():
     # A failed reply is terminal: nothing is promoted after it.
     assert runner._residual_unit_decided([created, committed, failed], 0) is True
     assert runner._residual_unit_decided([committed, late_created, late_failed], 0) is True
+    state = runner._completion_diagnostics(
+        [created, committed, cancelled],
+        0,
+        response_ids=["r1"],
+        stable_since=time.monotonic() - runner._COMPLETION_SETTLE_S - 1,
+    )
+    assert state["committed_observed"] is True
+    assert state["open_response_ids_at_commit"] == ["r1"]
+    assert state["unfinished_response_ids"] == []
+    assert state["quiet_window_satisfied"] is True
+    assert state["normal_terminal_decision"] is False
+    assert state["cancelled_terminal_decision"] is True
+    assert state["completion_state_events"][-1] == {
+        "type": "response.done",
+        "response_id": "r1",
+        "response_status": "cancelled",
+    }
 
 
 @pytest.mark.asyncio

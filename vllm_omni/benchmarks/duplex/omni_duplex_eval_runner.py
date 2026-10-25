@@ -94,6 +94,7 @@ class GenerateSampleResult:
     timed_sentences: list[dict[str, object]] = field(default_factory=list)
     timed_chunks: list[dict[str, object]] = field(default_factory=list)
     metadata: dict[str, object] = field(default_factory=dict)
+    diagnostics: dict[str, object] = field(default_factory=dict)
     output_tokens: int = 0
     audio_bytes: int = 0
     audio_sample_rate: int = 24_000
@@ -204,6 +205,27 @@ def write_sample_result(result: GenerateSampleResult) -> None:
         temporary.unlink(missing_ok=True)
 
 
+def write_failed_sample_diagnostics(result: GenerateSampleResult) -> Path:
+    """Publish a failed session's control-state trace outside judge input paths."""
+    output = result.output
+    diagnostics = output.parent.parent / "failed_sessions" / output.parent.name / f"{output.stem}.json"
+    diagnostics.parent.mkdir(parents=True, exist_ok=True)
+    temporary = diagnostics.with_suffix(".json.part")
+    try:
+        payload = {
+            "error": result.error,
+            "metadata": result.metadata,
+            "diagnostics": result.diagnostics,
+            "timed_sentence_count": len(result.timed_sentences),
+            "timed_chunk_count": len(result.timed_chunks),
+        }
+        temporary.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+        temporary.replace(diagnostics)
+    finally:
+        temporary.unlink(missing_ok=True)
+    return diagnostics
+
+
 def _event_collector_from_realtime(source: RealtimeEventCollector) -> EventCollector:
     """Replay experimental collector events onto the public EventCollector."""
     from vllm_omni.clients.duplex import EventCollector
@@ -260,6 +282,83 @@ def _response_status(event: dict[str, object]) -> str | None:
 
 def _completion_activity(events: list[dict[str, object]], start: int) -> int:
     return sum(event.get("type") in _COMPLETION_ACTIVITY for event in events[start:])
+
+
+def _completion_diagnostics(
+    events: list[dict[str, object]],
+    start: int,
+    *,
+    response_ids: list[str],
+    stable_since: float,
+) -> dict[str, object]:
+    """Return a compact state trace for a drain timeout."""
+    committed_at = next(
+        (index for index in range(start, len(events)) if events[index].get("type") == "input_audio_buffer.committed"),
+        None,
+    )
+    created_before: set[str] = set()
+    finished_before: set[str] = set()
+    finished: set[str] = set()
+    created_after: set[str] = set()
+    state_events: list[dict[str, object]] = []
+    event_type_counts: dict[str, int] = {}
+    for index, event in enumerate(events):
+        event_type = event.get("type")
+        response_id = _event_response_id(event)
+        if event_type == "response.done" and response_id is not None:
+            finished.add(response_id)
+        if committed_at is not None and index < committed_at:
+            if event_type == "response.created" and response_id is not None:
+                created_before.add(response_id)
+            elif event_type == "response.done" and response_id is not None:
+                finished_before.add(response_id)
+        elif (
+            committed_at is not None
+            and index > committed_at
+            and event_type == "response.created"
+            and response_id is not None
+        ):
+            created_after.add(response_id)
+        if index < start or not isinstance(event_type, str):
+            continue
+        if event_type in _COMPLETION_ACTIVITY:
+            event_type_counts[event_type] = event_type_counts.get(event_type, 0) + 1
+        if event_type not in {
+            "input_audio_buffer.committed",
+            "response.created",
+            "response.done",
+            "response.listen",
+        }:
+            continue
+        row: dict[str, object] = {"type": event_type}
+        if response_id is not None:
+            row["response_id"] = response_id
+        status = _response_status(event)
+        if status is not None:
+            row["response_status"] = status
+        if event_type == "response.listen":
+            response = event.get("response")
+            metadata = response.get("metadata") if isinstance(response, dict) else event.get("metadata")
+            if isinstance(metadata, dict):
+                row["model_listen"] = metadata.get("model_listen")
+                row["buffering"] = metadata.get("buffering")
+        state_events.append(row)
+    known_response_ids = sorted(set(response_ids))
+    quiet_for_s = max(0.0, time.monotonic() - stable_since)
+    return {
+        "committed_observed": committed_at is not None,
+        "open_response_ids_at_commit": sorted(created_before - finished_before),
+        "created_response_ids_after_commit": sorted(created_after),
+        "response_ids": known_response_ids,
+        "unfinished_response_ids": sorted(set(known_response_ids) - finished),
+        "quiet_for_s": quiet_for_s,
+        "settle_required_s": _COMPLETION_SETTLE_S,
+        "quiet_window_satisfied": quiet_for_s >= _COMPLETION_SETTLE_S,
+        "normal_terminal_decision": _residual_unit_decided(events, start),
+        "cancelled_terminal_decision": _residual_unit_decided(events, start, cancelled_is_terminal=True),
+        "completion_event_type_counts": event_type_counts,
+        "completion_state_events": state_events,
+    }
 
 
 def _residual_unit_decided(events: list[dict[str, object]], start: int, *, cancelled_is_terminal: bool = False) -> bool:
@@ -441,6 +540,8 @@ async def generate_sample(
     )
     response_done = False
     drain_timeout = None
+    drain_timeout_state: dict[str, object] | None = None
+    drain_timeout_event_count = 0
     close_timeout = None
     stream_start: float | None = None
     async with client:
@@ -522,6 +623,13 @@ async def generate_sample(
                     response_done = True
                 else:
                     drain_timeout = str(exc)
+                    drain_timeout_state = _completion_diagnostics(
+                        client.events.events,
+                        commit_from,
+                        response_ids=client.events.response_ids,
+                        stable_since=stable_since,
+                    )
+                    drain_timeout_event_count = len(client.events.events)
         finally:
             ack_task.cancel()
             try:
@@ -535,6 +643,13 @@ async def generate_sample(
             close_timeout = str(exc)
         events = list(client.events.events)
         collector = _event_collector_from_realtime(client.events)
+    if drain_timeout_state is not None:
+        drain_timeout_state["completion_state_events_after_timeout"] = _completion_diagnostics(
+            events,
+            drain_timeout_event_count,
+            response_ids=client.events.response_ids,
+            stable_since=time.monotonic(),
+        )["completion_state_events"]
     timed = [sentence.as_dict() for sentence in extract_timed_sentences(events, clock=clock)]
     chunks = [chunk.as_dict() for chunk in extract_timed_chunks(events, clock=clock)]
     meta = {
@@ -590,6 +705,7 @@ async def generate_sample(
         timed_sentences=timed,
         timed_chunks=chunks,
         metadata=meta,
+        diagnostics={"drain_timeout_state": drain_timeout_state} if drain_timeout_state is not None else {},
         output_tokens=bundle.output_tokens,
         audio_bytes=len(client.events.audio_bytes()),
         audio_sample_rate=client.events.output_sample_rate_hz,

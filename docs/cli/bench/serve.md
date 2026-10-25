@@ -407,6 +407,10 @@ response without failing the sample; its collected text remains available to the
 judge. The runner drains active responses before closing the session. Responses
 created during close are recorded in `unfinished_response_ids` in the metadata;
 server errors, failed responses, and drain/close timeouts still fail the sample.
+Failed measured sessions write a compact control-state trace under
+`failed_sessions/<split>/<id>.json`. These files record the committed event,
+response IDs and statuses, listen metadata, open responses, and quiet-window
+timing, but are never passed to the judge.
 
 `--duplex-eval-response-root` is a **parent directory** and may already exist.
 Each invocation creates an exclusive `run-*` subdirectory, so repeated runs and
