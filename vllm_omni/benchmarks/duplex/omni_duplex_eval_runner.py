@@ -262,7 +262,7 @@ def _completion_activity(events: list[dict[str, object]], start: int) -> int:
     return sum(event.get("type") in _COMPLETION_ACTIVITY for event in events[start:])
 
 
-def _residual_unit_decided(events: list[dict[str, object]], start: int) -> bool:
+def _residual_unit_decided(events: list[dict[str, object]], start: int, *, cancelled_is_terminal: bool = False) -> bool:
     """Whether the unit flushed by the commit has decided.
 
     A response created before ``input_audio_buffer.committed`` is the in-flight
@@ -270,9 +270,11 @@ def _residual_unit_decided(events: list[dict[str, object]], start: int) -> bool:
     is not the decision; the residual then emits ``response.listen`` or opens a
     new response. A ``cancelled`` ending is not a decision either: MiniCPM-o
     barge-in cancels the open turn and the same input can still open the residual
-    response after the quiet window. A ``failed`` ending is. The server does not
-    promote another unit after a failure, and a failed response created after the
-    commit is itself the residual; the sample is already unsuccessful.
+    response after the quiet window. Only the full drain-timeout fallback may
+    opt into treating a settled cancellation as terminal. A ``failed`` ending
+    is terminal immediately. The server does not promote another unit after a
+    failure, and a failed response created after the commit is itself the
+    residual; the sample is already unsuccessful.
     """
     committed_at = next(
         (index for index in range(start, len(events)) if events[index].get("type") == "input_audio_buffer.committed"),
@@ -295,6 +297,7 @@ def _residual_unit_decided(events: list[dict[str, object]], start: int) -> bool:
     created_after: set[str] = set()
     finished_open: set[str] = set()
     cancelled_open = False
+    cancelled_after: set[str] = set()
     failed_open = False
     promotes_residual = False
     for event in events[committed_at + 1 :]:
@@ -319,10 +322,24 @@ def _residual_unit_decided(events: list[dict[str, object]], start: int) -> bool:
                 continue
             # The residual response itself failed. A cancellation can still be
             # followed by the response the barge-in opens.
-            if response_id in created_after and status != "cancelled":
-                return True
+            if response_id in created_after:
+                if status == "cancelled":
+                    cancelled_after.add(response_id)
+                else:
+                    return True
             continue
         if event_type == "response.listen" and finished_open >= open_at_commit and _is_model_listen_decision(event):
+            return True
+    if cancelled_is_terminal:
+        if created_after and cancelled_after >= created_after:
+            return True
+        if (
+            bool(open_at_commit)
+            and finished_open >= open_at_commit
+            and cancelled_open
+            and not promotes_residual
+            and not created_after
+        ):
             return True
     return (
         bool(open_at_commit)
@@ -462,7 +479,7 @@ async def generate_sample(
             seen_activity = 0
             stable_since = time.monotonic()
 
-            def responses_finished() -> bool:
+            def responses_finished(*, cancelled_is_terminal: bool = False) -> bool:
                 # The residual unit decides after input_audio_buffer.committed.
                 # A reply that was already open only promotes that unit when it
                 # completes, and Stage1 can still open a response afterwards.
@@ -477,7 +494,11 @@ async def generate_sample(
                     return False
                 if time.monotonic() - stable_since < _COMPLETION_SETTLE_S:
                     return False
-                return _residual_unit_decided(events, commit_from)
+                return _residual_unit_decided(
+                    events,
+                    commit_from,
+                    cancelled_is_terminal=cancelled_is_terminal,
+                )
 
             try:
                 if server_turns:
@@ -492,7 +513,15 @@ async def generate_sample(
                     )
                     response_done = True
             except TimeoutError as exc:
-                drain_timeout = str(exc)
+                # A barge-in cancellation can legally be followed by another
+                # response, so it cannot end the normal wait. Once the entire
+                # drain window has elapsed, accept a settled cancellation only
+                # when every created response is done and the usual quiet
+                # window still holds.
+                if not server_turns and responses_finished(cancelled_is_terminal=True):
+                    response_done = True
+                else:
+                    drain_timeout = str(exc)
         finally:
             ack_task.cancel()
             try:
