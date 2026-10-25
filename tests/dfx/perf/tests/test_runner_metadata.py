@@ -856,6 +856,7 @@ def test_minicpmo_duplex_eval_config_replays_accuracy_ids_at_c8(monkeypatch):
     assert args.duplex_eval_ids == params["duplex_eval_ids"]
     assert args.num_prompts == 66
     assert args.max_concurrency == 8
+    assert args.save_detailed
     assert args.duplex_eval_split == "all"
     assert args.disable_shuffle
     assert call["num_warmups"] == 0

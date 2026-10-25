@@ -40,6 +40,7 @@
         "num_prompts": [66],
         "max_concurrency": [8],
         "num_warmups": 0,
+        "save_detailed": true,
         "ready_check_timeout_sec": 0,
         "disable_shuffle": true,
         "trust_remote_code": true,
