@@ -382,6 +382,9 @@ or heard in the clip, such as the word-repetition prompts in
 instruction alone. The standalone `generate` command accepts the same choice as `--mix`.
 The MiniCPM-o Omni-DuplexEval nightly (`tests/dfx/perf/tests/test_minicpmo_4_5_omni_duplex_eval.json`)
 runs with `soundtrack`; the Qwen3-Omni `server_vad` nightly keeps `question`.
+Its DFX config uses `duplex_eval_score_floor_hardware` to enforce calibrated
+quality floors on H100, B200 and A3 while ROCm burn-in still requires complete
+generation, publication and judging but records scores without a quality floor.
 
 Each session decodes its media in a
 worker thread after acquiring a concurrency slot, and releases the decoded input

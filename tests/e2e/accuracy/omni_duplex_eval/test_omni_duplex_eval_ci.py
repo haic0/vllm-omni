@@ -103,6 +103,11 @@ def test_fixed_quality_thresholds(result, config, section, field, value, passes)
             assert_accuracy_result(result, config)
 
 
+def test_record_only_hardware_keeps_full_validation_without_cuda_score_floors(result, config):
+    result["omni_duplex_eval"]["accuracy"]["pr"]["mean_all_success"] = 10 / 36
+    assert_accuracy_result(result, config, enforce_score_floors=False)
+
+
 @pytest.mark.parametrize(
     "section,field,value,message",
     [

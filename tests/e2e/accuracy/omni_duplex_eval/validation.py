@@ -24,8 +24,8 @@ def load_accuracy_config(path: str, params: dict) -> dict:
     return config
 
 
-def assert_accuracy_result(benchmark: dict, config: dict) -> None:
-    """Validate the saved summary and every selected score file before accepting a run."""
+def assert_accuracy_result(benchmark: dict, config: dict, *, enforce_score_floors: bool = True) -> None:
+    """Validate the saved summary and selected scores, optionally enforcing calibrated floors."""
     expected_files = {
         Path(split) / f"{sid}.json" for split, ids in config["sample_ids_per_split"].items() for sid in ids
     }
@@ -71,6 +71,8 @@ def assert_accuracy_result(benchmark: dict, config: dict) -> None:
         "proactive_reminder",
         "post_event_reminder",
     }, "PR by_task keys mismatch"
+    if not enforce_score_floors:
+        return
     baseline = config["baseline"]
     for label, value, minimum, maximum in (
         ("RTD content score", rtd.get("mean_content_score"), baseline["min_rtd_mean_content_score"], 3.0),
