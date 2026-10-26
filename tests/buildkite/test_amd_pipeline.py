@@ -1622,3 +1622,34 @@ def test_qwen_image_backend_similarity_executes_junit_guard_before_exit(
         check=False,
     )
     assert result.returncode == expected_status, result.stdout + result.stderr
+
+
+def test_minicpmo_duplex_function_is_one_nonblocking_nightly_job() -> None:
+    step = _find_step("MiniCPM-o 4.5 Duplex Function", AMD_NIGHTLY_PIPELINE)
+    assert step["grade"] == "NonBlocking"
+    assert step["agent_pool"] == "mi300_1"
+    assert step["mirror_hardwares"] == ["amdproduction"]
+    assert step["timeout_in_minutes"] == 180
+    commands = "\n".join(step["commands"])
+    marker = "full_model and omni and rocm and MI325 and cards_1"
+    assert marker in commands
+    assert "--run-level full_model" in commands
+    assert "--collect-only" in commands
+    assert "exit 5" in commands
+    assert "pytest.xml" in commands
+    nodes = (
+        "test_duplex_admission_and_expiry_reaper",
+        "test_duplex_soft_interrupt",
+        "test_duplex_server_vad_hard_interrupt",
+        "test_window_continuous_input[basic-False]",
+        "test_window_continuous_input[context-False]",
+        "test_window_continuous_input[context-True]",
+    )
+    for node in nodes:
+        assert commands.count(node) == 2
+    assert "Expected exactly $${#nodes[@]} MiniCPM-o duplex nodes" in commands
+    nightly = AMD_NIGHTLY_PIPELINE.read_text(encoding="utf-8")
+    assert nightly.count('label: "MiniCPM-o 4.5 Duplex Function"') == 1
+    for pipeline_path in (AMD_READY_PIPELINE, AMD_MERGE_PIPELINE):
+        text = pipeline_path.read_text(encoding="utf-8")
+        assert "MiniCPM-o 4.5 Duplex Function" not in text
