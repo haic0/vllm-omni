@@ -1859,3 +1859,34 @@ def test_qwen_image_expansion_executes_junit_guard_before_exit(
         timeout_status=timeout_status,
         expected_status=expected_status,
     )
+
+
+def test_wan22_function_has_separate_nonblocking_card_jobs() -> None:
+    one = _find_step("Wan2.2 Function 1 GPU", AMD_NIGHTLY_PIPELINE)
+    two = _find_step("Wan2.2 Function 2 GPU", AMD_NIGHTLY_PIPELINE)
+    assert one["agent_pool"] == "mi300_1"
+    assert two["agent_pool"] == "mi300_2"
+    for step, marker, sample in (
+        (one, "full_model and diffusion and rocm and MI325 and cards_1", "t2v_cpu_offload"),
+        (two, "full_model and diffusion and rocm and MI325 and cards_2", "cuda_t2v_cfg_parallel"),
+    ):
+        assert step["grade"] == "NonBlocking"
+        assert step["timeout_in_minutes"] == 180
+        assert step["env"]["DIFFUSION_ATTENTION_BACKEND"] == "TORCH_SDPA"
+        commands = "\n".join(step["commands"])
+        assert marker in commands
+        assert "--collect-only" in commands
+        assert "exit 5" in commands
+        assert commands.count(f"test_wan22_diffusion_features[{sample}]") == 2
+        assert "test_wan22_expansion.py" in commands
+    one_commands = "\n".join(one["commands"])
+    assert "i2v_cpu_offload" in one_commands
+    assert "ti2v_cpu_offload" in one_commands
+    assert "cuda_ti2v_cache_dit" in one_commands
+    two_commands = "\n".join(two["commands"])
+    assert "cuda_i2v_ulysses_sp" in two_commands
+    assert "cuda_ti2v_ring_atten" in two_commands
+    for pipeline_path in (AMD_READY_PIPELINE, AMD_MERGE_PIPELINE):
+        text = pipeline_path.read_text(encoding="utf-8")
+        assert "Wan2.2 Function 1 GPU" not in text
+        assert "Wan2.2 Function 2 GPU" not in text
