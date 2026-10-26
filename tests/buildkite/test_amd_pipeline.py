@@ -1508,8 +1508,11 @@ def test_qwen_image_backend_similarity_is_one_nonblocking_nightly_job() -> None:
     step = _find_step("Qwen-Image Diffusers Backend Similarity", AMD_NIGHTLY_PIPELINE)
     assert step["grade"] == "NonBlocking"
     assert step["agent_pool"] == "mi300_1"
+    assert step["mirror_hardwares"] == ["amdproduction"]
     assert step["timeout_in_minutes"] == 180
+    assert step["source_file_dependencies"] == "diffusion_qwen_image_accuracy"
     assert step["env"]["DIFFUSION_ATTENTION_BACKEND"] == "TORCH_SDPA"
+    assert step["artifact_paths"] == ["artifacts/rocm-qwen-image-backend-similarity/**/*"]
     commands = "\n".join(step["commands"])
     assert "full_model and diffusion and rocm and MI325 and cards_1" in commands
     assert '-k "2i_matches_diffusers"' in commands
@@ -1517,6 +1520,10 @@ def test_qwen_image_backend_similarity_is_one_nonblocking_nightly_job() -> None:
     assert "Expected exactly one Qwen-Image backend similarity node" in commands
     assert "--collect-only" in commands
     assert "exit 5" in commands
+    assert "pytest.xml" in commands
+    assert "Expected exactly one executed Qwen-Image backend similarity test" in commands
+    accuracy_test = Path("tests/e2e/accuracy/test_diffusers_backend_similarity.py").read_text(encoding="utf-8")
+    assert "torch.version.hip is not None" in accuracy_test
     for pipeline_path in (AMD_READY_PIPELINE, AMD_MERGE_PIPELINE):
         text = pipeline_path.read_text(encoding="utf-8")
         assert "Qwen-Image Diffusers Backend Similarity" not in text

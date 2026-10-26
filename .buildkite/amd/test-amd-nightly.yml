@@ -1297,7 +1297,7 @@ steps:
           - |
             set +e
             timeout --signal=TERM --kill-after=2m 165m \
-              pytest -s -v tests/e2e/accuracy/test_diffusers_backend_similarity.py \
+              pytest -s -v -ra tests/e2e/accuracy/test_diffusers_backend_similarity.py \
               -k "2i_matches_diffusers" \
               -m "full_model and diffusion and rocm and MI325 and cards_1" --run-level full_model \
               --junitxml="$$ROCM_QWEN_IMAGE_BACKEND_ARTIFACT_DIR/pytest.xml" \
@@ -1311,3 +1311,17 @@ steps:
             tail -n 100 "$$ROCM_QWEN_IMAGE_BACKEND_ARTIFACT_DIR/pytest.log" > \
               "$$ROCM_QWEN_IMAGE_BACKEND_ARTIFACT_DIR/pytest-summary.txt"
             exit "$$status"
+          - |
+            python -c 'import sys, xml.etree.ElementTree as ET
+            root = ET.parse(sys.argv[1]).getroot()
+            suites = [root] if root.tag == "testsuite" else list(root.findall("testsuite"))
+            tests = sum(int(suite.attrib.get("tests", "0")) for suite in suites)
+            skipped = sum(int(suite.attrib.get("skipped", "0")) for suite in suites)
+            if tests != 1 or skipped != 0:
+                print(
+                    f"Expected exactly one executed Qwen-Image backend similarity test; "
+                    f"reported tests={tests}, skipped={skipped}.",
+                    file=sys.stderr,
+                )
+                raise SystemExit(5)
+            ' "$$ROCM_QWEN_IMAGE_BACKEND_ARTIFACT_DIR/pytest.xml"
