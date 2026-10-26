@@ -1016,6 +1016,7 @@ def test_ready_jobs_restore_bf16_aiter_module_without_publishing(label: str, pyt
 
     assert step["agent_pool"] == "mi300_1"
     assert step["depends_on"] == "amd-fa-aiter"
+    assert step["env"] == {"VLLM_OMNI_AITER_MHA_SAME_BUILD_STEP": "amd-fa-aiter"}
     assert step["mirror_hardwares"] == ["amdproduction"]
     _assert_build_scoped_aiter_mha_cache(step, pytest_marker, publishes=False)
     assert all("VLLM_ROCM_USE_AITER=0" not in command for command in step["commands"])
@@ -1028,6 +1029,7 @@ def test_ready_flashattention_publishes_bf16_aiter_module_on_success() -> None:
     assert step["agent_pool"] == "mi300_1"
     assert step["key"] == "amd-fa-aiter"
     assert step["depends_on"] == "amd-build"
+    assert "VLLM_OMNI_AITER_MHA_SAME_BUILD_STEP" not in step.get("env", {})
     assert step["mirror_hardwares"] == ["amdproduction"]
     assert step["grade"] == "NonBlocking"
     assert step["timeout_in_minutes"] == 60

@@ -150,9 +150,11 @@ steps:
 
 - label: "Custom Pipeline Test"
   agent_pool: mi300_1
-  # FlashAttention remains soft-failed when it misses, so this step still runs
-  # and compiles only when that publish is absent.
+  # FlashAttention stays soft-failed, so this step still runs when that job
+  # misses. prepare restores its artifact only after the publisher exits 0.
   depends_on: amd-fa-aiter
+  env:
+    VLLM_OMNI_AITER_MHA_SAME_BUILD_STEP: amd-fa-aiter
   mirror_hardwares: [amdproduction]
   grade: Blocking
   commands:
@@ -238,9 +240,11 @@ steps:
 
     - label: "Diffusion · Batch Test"
       agent_pool: mi300_1
-      # Same soft-fail dependency as Custom Pipeline: reuse the module this
-      # build just published instead of compiling it in parallel.
+      # Same soft-fail dependency as Custom Pipeline. The same-build restore
+      # is limited to the publisher job that exited 0.
       depends_on: amd-fa-aiter
+      env:
+        VLLM_OMNI_AITER_MHA_SAME_BUILD_STEP: amd-fa-aiter
       mirror_hardwares: [amdproduction]
       grade: Blocking
       commands:
