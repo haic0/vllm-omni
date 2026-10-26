@@ -1727,3 +1727,35 @@ def test_minicpmo_duplex_executes_junit_guard_before_exit(
         timeout_status=timeout_status,
         expected_status=expected_status,
     )
+
+
+def test_qwen_image_expansion_has_separate_nonblocking_card_jobs() -> None:
+    one = _find_step("Qwen-Image Expansion 1 GPU", AMD_NIGHTLY_PIPELINE)
+    two = _find_step("Qwen-Image Expansion 2 GPU", AMD_NIGHTLY_PIPELINE)
+    assert one["agent_pool"] == "mi300_1"
+    assert two["agent_pool"] == "mi300_2"
+    for step, marker, nodes in (
+        (
+            one,
+            "full_model and diffusion and rocm and MI325 and cards_1",
+            ("cpu_offload", "step_execution", "cache_tea_cache", "layerwise_offload"),
+        ),
+        (
+            two,
+            "full_model and diffusion and rocm and MI325 and cards_2",
+            ("ulysses_2", "ring_2", "cfg_parallel_2", "vae_patch_parallel_2", "parallel_hsdp"),
+        ),
+    ):
+        assert step["grade"] == "NonBlocking"
+        assert step["timeout_in_minutes"] == 180
+        assert step["env"]["DIFFUSION_ATTENTION_BACKEND"] == "TORCH_SDPA"
+        commands = "\n".join(step["commands"])
+        assert marker in commands
+        assert "--collect-only" in commands
+        assert "exit 5" in commands
+        for node in nodes:
+            assert commands.count(f"test_qwen_image[{node}]") == 2
+    for pipeline_path in (AMD_READY_PIPELINE, AMD_MERGE_PIPELINE):
+        text = pipeline_path.read_text(encoding="utf-8")
+        assert "Qwen-Image Expansion 1 GPU" not in text
+        assert "Qwen-Image Expansion 2 GPU" not in text
