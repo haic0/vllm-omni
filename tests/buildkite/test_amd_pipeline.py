@@ -658,7 +658,7 @@ _ROCM_MIGRATED_AMD_GPU_JOBS = (
         "Omni Model Test Qwen3-Omni",
         AMD_MERGE_PIPELINE,
         "Blocking",
-        17,
+        18,
         "advanced_model and rocm and MI325 and not nvidia_only",
     ),
     (
@@ -1999,3 +1999,15 @@ def test_wan22_function_executes_junit_guard_before_exit(
         timeout_status=timeout_status,
         expected_status=expected_status,
     )
+
+
+def test_qwen3_omni_merge_includes_the_shm_leak_case() -> None:
+    """The existing two-GPU MERGE lane also runs the async-chunk SHM leak check."""
+    step = _find_step("Omni Model Test Qwen3-Omni", AMD_MERGE_PIPELINE)
+    shm_path = "tests/e2e/online_serving/test_qwen3_omni_shm_leak.py"
+    commands_with_shm = [command for command in step["commands"] if shm_path in command]
+
+    assert step["agent_pool"] == "mi300_2"
+    assert step["grade"] == "Blocking"
+    assert len(commands_with_shm) == 2
+    assert "assert-pytest-collection.sh 18" in commands_with_shm[0]

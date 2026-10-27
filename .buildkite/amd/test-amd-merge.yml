@@ -381,10 +381,11 @@ steps:
       commands:
         - export VLLM_WORKER_MULTIPROC_METHOD=spawn
         - >-
-          bash .buildkite/amd/scripts/assert-pytest-collection.sh 17
+          bash .buildkite/amd/scripts/assert-pytest-collection.sh 18
           tests/e2e/offline_inference/test_qwen3_omni.py
           tests/e2e/online_serving/test_qwen3_omni.py
           tests/e2e/offline_inference/test_qwen3_omni_colocate_async.py
+          tests/e2e/online_serving/test_qwen3_omni_shm_leak.py
           -m 'advanced_model and rocm and MI325 and not nvidia_only'
           --run-level 'advanced_model'
         - >-
@@ -392,6 +393,7 @@ steps:
           tests/e2e/offline_inference/test_qwen3_omni.py
           tests/e2e/online_serving/test_qwen3_omni.py
           tests/e2e/offline_inference/test_qwen3_omni_colocate_async.py
+          tests/e2e/online_serving/test_qwen3_omni_shm_leak.py
           -m 'advanced_model and rocm and MI325 and not nvidia_only'
           --run-level 'advanced_model'
 
