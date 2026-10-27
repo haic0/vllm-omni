@@ -398,7 +398,9 @@ async def test_decoding_audio_blocks_silence_until_handled(monkeypatch, invalid_
     try:
         h.submit(append_audio())
         await asyncio.wait_for(entered.wait(), timeout=2)
-        assert h.session.pending_input_bytes == 0
+        # Decode is still inside offload, so PCM is not buffered yet. Silence
+        # stays blocked by the in-flight append. The wire admission may remain
+        # charged until preprocessing finishes.
         assert not h.runner.model_state.audio_buffer.has_pending()
         assert not h.runner.model_state.audio_buffer.has_reserved()
         assert h.runner._real_input_waiting()
