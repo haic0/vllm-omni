@@ -1538,28 +1538,23 @@ def test_qwen_image_backend_similarity_is_one_nonblocking_nightly_job() -> None:
         assert "Qwen-Image Diffusers Backend Similarity" not in text
 
 
-@pytest.mark.parametrize(
-    ("pytest_status", "tests", "skipped", "timeout_status", "expected_status"),
-    [
-        (0, 1, 0, None, 0),
-        (0, 1, 1, None, 5),
-        (0, 0, 0, None, 5),
-        (1, 1, 0, None, 1),
-        (0, 1, 0, 124, 124),
-    ],
-    ids=("pass", "skipped", "zero-tests", "pytest-failure", "timeout"),
-)
-def test_qwen_image_backend_similarity_executes_junit_guard_before_exit(
+def _assert_nightly_junit_guard(
     tmp_path: Path,
+    *,
+    step_label: str,
+    command_fragment: str,
+    expected_message: str,
+    artifact_env: str,
+    job_id_prefix: str,
     pytest_status: int,
     tests: int,
     skipped: int,
     timeout_status: int | None,
     expected_status: int,
 ) -> None:
-    step = _find_step("Qwen-Image Diffusers Backend Similarity", AMD_NIGHTLY_PIPELINE)
-    run_command = next(command for command in step["commands"] if "pytest -s -v -ra" in command)
-    assert "Expected exactly one executed Qwen-Image backend similarity test" in run_command
+    step = _find_step(step_label, AMD_NIGHTLY_PIPELINE)
+    run_command = next(command for command in step["commands"] if command_fragment in command)
+    assert expected_message in run_command
 
     fake_bin = tmp_path / "bin"
     fake_bin.mkdir()
@@ -1602,9 +1597,8 @@ def test_qwen_image_backend_similarity_executes_junit_guard_before_exit(
             "REAL_PYTHON": sys.executable,
             "VLLM_CI_DOCKER_DISABLED": "1",
             "VLLM_CI_REQUIRE_PERSISTENT_HF_CACHE": "0",
-            "BUILDKITE_JOB_ID": f"qwen-image-guard-{tmp_path.name}",
+            "BUILDKITE_JOB_ID": f"{job_id_prefix}-{tmp_path.name}",
             "HF_HOME": str(tmp_path / "hf"),
-            "ROCM_QWEN_IMAGE_BACKEND_ARTIFACT_DIR": str(artifact_dir),
             "FAKE_PYTEST_STATUS": str(pytest_status),
             "FAKE_JUNIT_TESTS": str(tests),
             "FAKE_JUNIT_SKIPPED": str(skipped),
@@ -1612,6 +1606,7 @@ def test_qwen_image_backend_similarity_executes_junit_guard_before_exit(
             "TEST_COMMANDS": run_command.replace("$$", "$"),
         }
     )
+    env[artifact_env] = str(artifact_dir)
 
     result = subprocess.run(
         ["bash", str(AMD_RUNNER)],
@@ -1622,6 +1617,40 @@ def test_qwen_image_backend_similarity_executes_junit_guard_before_exit(
         check=False,
     )
     assert result.returncode == expected_status, result.stdout + result.stderr
+
+
+@pytest.mark.parametrize(
+    ("pytest_status", "tests", "skipped", "timeout_status", "expected_status"),
+    [
+        (0, 1, 0, None, 0),
+        (0, 1, 1, None, 5),
+        (0, 0, 0, None, 5),
+        (1, 1, 0, None, 1),
+        (0, 1, 0, 124, 124),
+    ],
+    ids=("pass", "skipped", "zero-tests", "pytest-failure", "timeout"),
+)
+def test_qwen_image_backend_similarity_executes_junit_guard_before_exit(
+    tmp_path: Path,
+    pytest_status: int,
+    tests: int,
+    skipped: int,
+    timeout_status: int | None,
+    expected_status: int,
+) -> None:
+    _assert_nightly_junit_guard(
+        tmp_path,
+        step_label="Qwen-Image Diffusers Backend Similarity",
+        command_fragment="pytest -s -v -ra",
+        expected_message="Expected exactly one executed Qwen-Image backend similarity test",
+        artifact_env="ROCM_QWEN_IMAGE_BACKEND_ARTIFACT_DIR",
+        job_id_prefix="qwen-image-guard",
+        pytest_status=pytest_status,
+        tests=tests,
+        skipped=skipped,
+        timeout_status=timeout_status,
+        expected_status=expected_status,
+    )
 
 
 def test_minicpmo_duplex_function_is_one_nonblocking_nightly_job() -> None:
@@ -1648,8 +1677,43 @@ def test_minicpmo_duplex_function_is_one_nonblocking_nightly_job() -> None:
     for node in nodes:
         assert commands.count(node) == 2
     assert "Expected exactly $${#nodes[@]} MiniCPM-o duplex nodes" in commands
+    assert "Expected exactly six executed MiniCPM-o duplex tests" in commands
     nightly = AMD_NIGHTLY_PIPELINE.read_text(encoding="utf-8")
     assert nightly.count('label: "MiniCPM-o 4.5 Duplex Function"') == 1
     for pipeline_path in (AMD_READY_PIPELINE, AMD_MERGE_PIPELINE):
         text = pipeline_path.read_text(encoding="utf-8")
         assert "MiniCPM-o 4.5 Duplex Function" not in text
+
+
+@pytest.mark.parametrize(
+    ("pytest_status", "tests", "skipped", "timeout_status", "expected_status"),
+    [
+        (0, 6, 0, None, 0),
+        (0, 6, 1, None, 5),
+        (0, 0, 0, None, 5),
+        (1, 6, 0, None, 1),
+        (0, 6, 0, 124, 124),
+    ],
+    ids=("pass", "skipped", "zero-tests", "pytest-failure", "timeout"),
+)
+def test_minicpmo_duplex_executes_junit_guard_before_exit(
+    tmp_path: Path,
+    pytest_status: int,
+    tests: int,
+    skipped: int,
+    timeout_status: int | None,
+    expected_status: int,
+) -> None:
+    _assert_nightly_junit_guard(
+        tmp_path,
+        step_label="MiniCPM-o 4.5 Duplex Function",
+        command_fragment='pytest -s -v "$${nodes[@]}"',
+        expected_message="Expected exactly six executed MiniCPM-o duplex tests",
+        artifact_env="ROCM_MINICPMO_DUPLEX_ARTIFACT_DIR",
+        job_id_prefix="minicpmo-duplex-guard",
+        pytest_status=pytest_status,
+        tests=tests,
+        skipped=skipped,
+        timeout_status=timeout_status,
+        expected_status=expected_status,
+    )
