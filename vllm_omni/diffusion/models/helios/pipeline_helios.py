@@ -37,6 +37,7 @@ from vllm_omni.diffusion.models.interface import SupportsComponentDiscovery
 from vllm_omni.diffusion.models.progress_bar import ProgressBarMixin
 from vllm_omni.diffusion.profiler.diffusion_pipeline_profiler import DiffusionPipelineProfilerMixin
 from vllm_omni.diffusion.request import OmniDiffusionRequest
+from vllm_omni.diffusion.utils.flow_matching import safe_linalg_cholesky
 from vllm_omni.diffusion.worker.request_batch import DiffusionRequestBatch
 from vllm_omni.platforms import current_omni_platform
 
@@ -95,15 +96,11 @@ def _block_noise_cholesky_factor(
         * gamma
     )
     cov += eye * 1e-8
-    try:
-        factor = torch.linalg.cholesky(cov)
-    except RuntimeError as exc:
-        if not use_npu_fallback or "requires compiling PyTorch with LAPACK" not in str(exc):
-            raise
-        # Some ROCm wheels omit LAPACK even though NumPy in the same image can
-        # factor this tiny CPU float64 matrix.
-        factor = torch.from_numpy(np.linalg.cholesky(cov.detach().numpy()))
-    return factor.to(device=device, dtype=torch.float32)
+    if use_npu_fallback:
+        # Factor on CPU in float64, then move to the caller's device. The
+        # shared helper covers ROCm wheels that ship without LAPACK.
+        return safe_linalg_cholesky(cov).to(device=device)
+    return torch.linalg.cholesky(cov).to(device=device, dtype=torch.float32)
 
 
 def load_json_config(model_path: str, subfolder: str, filename: str, local_files_only: bool = True) -> dict:
