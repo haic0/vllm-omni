@@ -1732,30 +1732,130 @@ def test_minicpmo_duplex_executes_junit_guard_before_exit(
 def test_qwen_image_expansion_has_separate_nonblocking_card_jobs() -> None:
     one = _find_step("Qwen-Image Expansion 1 GPU", AMD_NIGHTLY_PIPELINE)
     two = _find_step("Qwen-Image Expansion 2 GPU", AMD_NIGHTLY_PIPELINE)
-    assert one["agent_pool"] == "mi300_1"
-    assert two["agent_pool"] == "mi300_2"
-    for step, marker, nodes in (
+    cases = (
         (
             one,
+            "mi300_1",
             "full_model and diffusion and rocm and MI325 and cards_1",
-            ("cpu_offload", "step_execution", "cache_tea_cache", "layerwise_offload"),
+            "artifacts/rocm-qwen-image-expansion-1gpu/**/*",
+            (
+                "cpu_offload",
+                "step_execution",
+                "cache_tea_cache",
+                "layerwise_offload",
+            ),
+            "Expected exactly four executed Qwen-Image expansion 1-GPU tests",
         ),
         (
             two,
+            "mi300_2",
             "full_model and diffusion and rocm and MI325 and cards_2",
-            ("ulysses_2", "ring_2", "cfg_parallel_2", "vae_patch_parallel_2", "parallel_hsdp"),
+            "artifacts/rocm-qwen-image-expansion-2gpu/**/*",
+            (
+                "ulysses_2",
+                "ring_2",
+                "cfg_parallel_2",
+                "vae_patch_parallel_2",
+                "parallel_hsdp",
+            ),
+            "Expected exactly five executed Qwen-Image expansion 2-GPU tests",
         ),
-    ):
+    )
+    for step, agent_pool, marker, artifact_path, nodes, expected_message in cases:
         assert step["grade"] == "NonBlocking"
+        assert step["agent_pool"] == agent_pool
+        assert step["mirror_hardwares"] == ["amdproduction"]
         assert step["timeout_in_minutes"] == 180
+        assert step["source_file_dependencies"] == "diffusion_qwen_image_function"
         assert step["env"]["DIFFUSION_ATTENTION_BACKEND"] == "TORCH_SDPA"
+        assert step["artifact_paths"] == [artifact_path]
         commands = "\n".join(step["commands"])
         assert marker in commands
+        assert "--run-level full_model" in commands
         assert "--collect-only" in commands
         assert "exit 5" in commands
+        assert "pytest.xml" in commands
         for node in nodes:
             assert commands.count(f"test_qwen_image[{node}]") == 2
+        assert commands.count("--shard-id=0") == 2
+        assert commands.count("--num-shards=1") == 2
+        assert "Expected exactly $${#nodes[@]} Qwen-Image expansion" in commands
+        assert expected_message in commands
+    nightly = AMD_NIGHTLY_PIPELINE.read_text(encoding="utf-8")
+    assert nightly.count('label: "Qwen-Image Expansion 1 GPU"') == 1
+    assert nightly.count('label: "Qwen-Image Expansion 2 GPU"') == 1
     for pipeline_path in (AMD_READY_PIPELINE, AMD_MERGE_PIPELINE):
         text = pipeline_path.read_text(encoding="utf-8")
         assert "Qwen-Image Expansion 1 GPU" not in text
         assert "Qwen-Image Expansion 2 GPU" not in text
+
+
+@pytest.mark.parametrize(
+    (
+        "step_label",
+        "expected_tests",
+        "expected_message",
+        "artifact_env",
+        "job_id_prefix",
+    ),
+    [
+        (
+            "Qwen-Image Expansion 1 GPU",
+            4,
+            "Expected exactly four executed Qwen-Image expansion 1-GPU tests",
+            "ROCM_QWEN_IMAGE_EXPANSION_1GPU_ARTIFACT_DIR",
+            "qwen-image-expansion-1gpu-guard",
+        ),
+        (
+            "Qwen-Image Expansion 2 GPU",
+            5,
+            "Expected exactly five executed Qwen-Image expansion 2-GPU tests",
+            "ROCM_QWEN_IMAGE_EXPANSION_2GPU_ARTIFACT_DIR",
+            "qwen-image-expansion-2gpu-guard",
+        ),
+    ],
+    ids=("1gpu", "2gpu"),
+)
+@pytest.mark.parametrize(
+    (
+        "pytest_status",
+        "tests_override",
+        "skipped",
+        "timeout_status",
+        "expected_status",
+    ),
+    [
+        (0, None, 0, None, 0),
+        (0, None, 1, None, 5),
+        (0, 0, 0, None, 5),
+        (1, None, 0, None, 1),
+        (0, None, 0, 124, 124),
+    ],
+    ids=("pass", "skipped", "zero-tests", "pytest-failure", "timeout"),
+)
+def test_qwen_image_expansion_executes_junit_guard_before_exit(
+    tmp_path: Path,
+    step_label: str,
+    expected_tests: int,
+    expected_message: str,
+    artifact_env: str,
+    job_id_prefix: str,
+    pytest_status: int,
+    tests_override: int | None,
+    skipped: int,
+    timeout_status: int | None,
+    expected_status: int,
+) -> None:
+    _assert_nightly_junit_guard(
+        tmp_path,
+        step_label=step_label,
+        command_fragment='pytest -s -v "$${nodes[@]}"',
+        expected_message=expected_message,
+        artifact_env=artifact_env,
+        job_id_prefix=job_id_prefix,
+        pytest_status=pytest_status,
+        tests=expected_tests if tests_override is None else tests_override,
+        skipped=skipped,
+        timeout_status=timeout_status,
+        expected_status=expected_status,
+    )
