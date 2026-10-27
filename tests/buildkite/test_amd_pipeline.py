@@ -1859,3 +1859,30 @@ def test_qwen_image_expansion_executes_junit_guard_before_exit(
         timeout_status=timeout_status,
         expected_status=expected_status,
     )
+
+
+_QWEN25_OMNI_MERGE_NODES = (
+    "tests/e2e/online_serving/test_qwen2_5_omni_expansion.py::test_mix_to_text_audio_001[omni_server0]",
+    "tests/e2e/online_serving/test_qwen2_5_omni_expansion.py::test_audio_in_video_boundaries[False-omni_server0]",
+    "tests/e2e/online_serving/test_qwen2_5_omni_expansion.py::test_audio_in_video_boundaries[True-omni_server0]",
+    "tests/e2e/online_serving/test_qwen2_5_omni_expansion.py::test_speaker_001[Chelsie-omni_server0]",
+    "tests/e2e/online_serving/test_qwen2_5_omni_expansion.py::test_speaker_001[ETHAN-omni_server0]",
+    "tests/e2e/offline_inference/test_qwen2_5_omni_expansion.py::test_mix_to_audio[omni_runner0-rocm]",
+    "tests/e2e/offline_inference/test_qwen2_5_omni_expansion.py::test_text_to_text[omni_runner0-rocm]",
+)
+
+
+def test_qwen25_omni_merge_selects_seven_marked_nodes() -> None:
+    """MERGE runs the marked two-card cases and leaves the unmarked text case out."""
+    step = _find_step("Omni Model Test Qwen2-5-Omni", AMD_MERGE_PIPELINE)
+    command = "\n".join(step["commands"])
+
+    assert step["agent_pool"] == "mi300_2"
+    assert step["grade"] == "NonBlocking"
+    assert step["timeout_in_minutes"] == 180
+    assert "slow and rocm and MI325 and cards_2" in command
+    assert "test_text_to_text_001" not in command
+    assert "tests/e2e/*/" not in command
+    for node in _QWEN25_OMNI_MERGE_NODES:
+        assert node in command
+    assert command.count("test_qwen2_5_omni_expansion.py::") == len(_QWEN25_OMNI_MERGE_NODES)
