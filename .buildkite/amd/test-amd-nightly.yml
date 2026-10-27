@@ -1349,6 +1349,7 @@ steps:
               "tests/e2e/online_serving/test_wan22_expansion.py::test_wan22_diffusion_features[cuda_ti2v_cache_dit]"
             )
             pytest --collect-only -q "$${nodes[@]}" \
+              --shard-id=0 --num-shards=1 \
               -m "full_model and diffusion and rocm and MI325 and cards_1" --run-level full_model \
               > "$$ROCM_WAN22_FN_ARTIFACT_DIR/collection.txt"
             count=$$(awk '/::/ { n++ } END { print n + 0 }' \
@@ -1358,26 +1359,61 @@ steps:
               cat "$$ROCM_WAN22_FN_ARTIFACT_DIR/collection.txt" >&2
               exit 5
             fi
+            for node in "$${nodes[@]}"; do
+              if ! grep -Fq "$$node" \
+                "$$ROCM_WAN22_FN_ARTIFACT_DIR/collection.txt"; then
+                echo "Wan2.2 function 1-GPU node was not collected: $$node" >&2
+                cat "$$ROCM_WAN22_FN_ARTIFACT_DIR/collection.txt" >&2
+                exit 5
+              fi
+            done
           - |
-            set +e
-            nodes=(
-              "tests/e2e/online_serving/test_wan22_expansion.py::test_wan22_diffusion_features[t2v_cpu_offload]"
-              "tests/e2e/online_serving/test_wan22_expansion.py::test_wan22_diffusion_features[i2v_cpu_offload]"
-              "tests/e2e/online_serving/test_wan22_expansion.py::test_wan22_diffusion_features[ti2v_cpu_offload]"
-              "tests/e2e/online_serving/test_wan22_expansion.py::test_wan22_diffusion_features[cuda_t2v_cache_dit]"
-              "tests/e2e/online_serving/test_wan22_expansion.py::test_wan22_diffusion_features[cuda_i2v_cache_dit]"
-              "tests/e2e/online_serving/test_wan22_expansion.py::test_wan22_diffusion_features[cuda_ti2v_cache_dit]"
-            )
-            timeout --signal=TERM --kill-after=2m 165m \
-              pytest -s -v "$${nodes[@]}" \
-              -m "full_model and diffusion and rocm and MI325 and cards_1" --run-level full_model \
-              --junitxml="$$ROCM_WAN22_FN_ARTIFACT_DIR/pytest.xml" \
-              2>&1 | tee "$$ROCM_WAN22_FN_ARTIFACT_DIR/pytest.log"
-            status=$${PIPESTATUS[0]}
-            set -e
+            if (
+              trap - ERR
+              set +e
+              nodes=(
+                "tests/e2e/online_serving/test_wan22_expansion.py::test_wan22_diffusion_features[t2v_cpu_offload]"
+                "tests/e2e/online_serving/test_wan22_expansion.py::test_wan22_diffusion_features[i2v_cpu_offload]"
+                "tests/e2e/online_serving/test_wan22_expansion.py::test_wan22_diffusion_features[ti2v_cpu_offload]"
+                "tests/e2e/online_serving/test_wan22_expansion.py::test_wan22_diffusion_features[cuda_t2v_cache_dit]"
+                "tests/e2e/online_serving/test_wan22_expansion.py::test_wan22_diffusion_features[cuda_i2v_cache_dit]"
+                "tests/e2e/online_serving/test_wan22_expansion.py::test_wan22_diffusion_features[cuda_ti2v_cache_dit]"
+              )
+              timeout --signal=TERM --kill-after=2m 165m \
+                pytest -s -v "$${nodes[@]}" \
+                --shard-id=0 --num-shards=1 \
+                -m "full_model and diffusion and rocm and MI325 and cards_1" --run-level full_model \
+                --junitxml="$$ROCM_WAN22_FN_ARTIFACT_DIR/pytest.xml" \
+                2>&1 | tee "$$ROCM_WAN22_FN_ARTIFACT_DIR/pytest.log"
+              exit "$${PIPESTATUS[0]}"
+            ); then
+              status=0
+            else
+              status=$$?
+            fi
             tail -n 100 "$$ROCM_WAN22_FN_ARTIFACT_DIR/pytest.log" > \
               "$$ROCM_WAN22_FN_ARTIFACT_DIR/pytest-summary.txt"
-            exit "$$status"
+            if [[ "$$status" -eq 0 ]]; then
+              if python -c 'import sys, xml.etree.ElementTree as ET
+            root = ET.parse(sys.argv[1]).getroot()
+            suites = [root] if root.tag == "testsuite" else list(root.findall("testsuite"))
+            tests = sum(int(suite.attrib.get("tests", "0")) for suite in suites)
+            skipped = sum(int(suite.attrib.get("skipped", "0")) for suite in suites)
+            if tests != 6 or skipped != 0:
+                print(
+                    f"Expected exactly six executed Wan2.2 function 1-GPU tests; "
+                    f"reported tests={tests}, skipped={skipped}.",
+                    file=sys.stderr,
+                )
+                raise SystemExit(5)
+            ' "$$ROCM_WAN22_FN_ARTIFACT_DIR/pytest.xml"
+              then
+                status=0
+              else
+                status=$$?
+              fi
+            fi
+            (exit "$$status")
 
   - group: ":full_moon: Wan2.2 Function 2 GPU Group"
     steps:
@@ -1413,6 +1449,7 @@ steps:
               "tests/e2e/online_serving/test_wan22_expansion.py::test_wan22_diffusion_features[cuda_ti2v_ring_atten]"
             )
             pytest --collect-only -q "$${nodes[@]}" \
+              --shard-id=0 --num-shards=1 \
               -m "full_model and diffusion and rocm and MI325 and cards_2" --run-level full_model \
               > "$$ROCM_WAN22_FN_ARTIFACT_DIR/collection.txt"
             count=$$(awk '/::/ { n++ } END { print n + 0 }' \
@@ -1422,35 +1459,70 @@ steps:
               cat "$$ROCM_WAN22_FN_ARTIFACT_DIR/collection.txt" >&2
               exit 5
             fi
+            for node in "$${nodes[@]}"; do
+              if ! grep -Fq "$$node" \
+                "$$ROCM_WAN22_FN_ARTIFACT_DIR/collection.txt"; then
+                echo "Wan2.2 function 2-GPU node was not collected: $$node" >&2
+                cat "$$ROCM_WAN22_FN_ARTIFACT_DIR/collection.txt" >&2
+                exit 5
+              fi
+            done
           - |
-            set +e
-            nodes=(
-              "tests/e2e/online_serving/test_wan22_expansion.py::test_wan22_diffusion_features[cuda_t2v_cfg_parallel]"
-              "tests/e2e/online_serving/test_wan22_expansion.py::test_wan22_diffusion_features[cuda_t2v_ulysses_sp]"
-              "tests/e2e/online_serving/test_wan22_expansion.py::test_wan22_diffusion_features[cuda_t2v_tp_vae_patch]"
-              "tests/e2e/online_serving/test_wan22_expansion.py::test_wan22_diffusion_features[cuda_t2v_hsdp]"
-              "tests/e2e/online_serving/test_wan22_expansion.py::test_wan22_diffusion_features[cuda_t2v_ring_atten]"
-              "tests/e2e/online_serving/test_wan22_expansion.py::test_wan22_diffusion_features[cuda_i2v_cfg_parallel]"
-              "tests/e2e/online_serving/test_wan22_expansion.py::test_wan22_diffusion_features[cuda_i2v_ulysses_sp]"
-              "tests/e2e/online_serving/test_wan22_expansion.py::test_wan22_diffusion_features[cuda_i2v_tp_vae_patch]"
-              "tests/e2e/online_serving/test_wan22_expansion.py::test_wan22_diffusion_features[cuda_i2v_hsdp]"
-              "tests/e2e/online_serving/test_wan22_expansion.py::test_wan22_diffusion_features[cuda_i2v_ring_atten]"
-              "tests/e2e/online_serving/test_wan22_expansion.py::test_wan22_diffusion_features[cuda_ti2v_cfg_parallel]"
-              "tests/e2e/online_serving/test_wan22_expansion.py::test_wan22_diffusion_features[cuda_ti2v_ulysses_sp]"
-              "tests/e2e/online_serving/test_wan22_expansion.py::test_wan22_diffusion_features[cuda_ti2v_tp_vae_patch]"
-              "tests/e2e/online_serving/test_wan22_expansion.py::test_wan22_diffusion_features[cuda_ti2v_hsdp]"
-              "tests/e2e/online_serving/test_wan22_expansion.py::test_wan22_diffusion_features[cuda_ti2v_ring_atten]"
-            )
-            timeout --signal=TERM --kill-after=2m 165m \
-              pytest -s -v "$${nodes[@]}" \
-              -m "full_model and diffusion and rocm and MI325 and cards_2" --run-level full_model \
-              --junitxml="$$ROCM_WAN22_FN_ARTIFACT_DIR/pytest.xml" \
-              2>&1 | tee "$$ROCM_WAN22_FN_ARTIFACT_DIR/pytest.log"
-            status=$${PIPESTATUS[0]}
-            set -e
+            if (
+              trap - ERR
+              set +e
+              nodes=(
+                "tests/e2e/online_serving/test_wan22_expansion.py::test_wan22_diffusion_features[cuda_t2v_cfg_parallel]"
+                "tests/e2e/online_serving/test_wan22_expansion.py::test_wan22_diffusion_features[cuda_t2v_ulysses_sp]"
+                "tests/e2e/online_serving/test_wan22_expansion.py::test_wan22_diffusion_features[cuda_t2v_tp_vae_patch]"
+                "tests/e2e/online_serving/test_wan22_expansion.py::test_wan22_diffusion_features[cuda_t2v_hsdp]"
+                "tests/e2e/online_serving/test_wan22_expansion.py::test_wan22_diffusion_features[cuda_t2v_ring_atten]"
+                "tests/e2e/online_serving/test_wan22_expansion.py::test_wan22_diffusion_features[cuda_i2v_cfg_parallel]"
+                "tests/e2e/online_serving/test_wan22_expansion.py::test_wan22_diffusion_features[cuda_i2v_ulysses_sp]"
+                "tests/e2e/online_serving/test_wan22_expansion.py::test_wan22_diffusion_features[cuda_i2v_tp_vae_patch]"
+                "tests/e2e/online_serving/test_wan22_expansion.py::test_wan22_diffusion_features[cuda_i2v_hsdp]"
+                "tests/e2e/online_serving/test_wan22_expansion.py::test_wan22_diffusion_features[cuda_i2v_ring_atten]"
+                "tests/e2e/online_serving/test_wan22_expansion.py::test_wan22_diffusion_features[cuda_ti2v_cfg_parallel]"
+                "tests/e2e/online_serving/test_wan22_expansion.py::test_wan22_diffusion_features[cuda_ti2v_ulysses_sp]"
+                "tests/e2e/online_serving/test_wan22_expansion.py::test_wan22_diffusion_features[cuda_ti2v_tp_vae_patch]"
+                "tests/e2e/online_serving/test_wan22_expansion.py::test_wan22_diffusion_features[cuda_ti2v_hsdp]"
+                "tests/e2e/online_serving/test_wan22_expansion.py::test_wan22_diffusion_features[cuda_ti2v_ring_atten]"
+              )
+              timeout --signal=TERM --kill-after=2m 165m \
+                pytest -s -v "$${nodes[@]}" \
+                --shard-id=0 --num-shards=1 \
+                -m "full_model and diffusion and rocm and MI325 and cards_2" --run-level full_model \
+                --junitxml="$$ROCM_WAN22_FN_ARTIFACT_DIR/pytest.xml" \
+                2>&1 | tee "$$ROCM_WAN22_FN_ARTIFACT_DIR/pytest.log"
+              exit "$${PIPESTATUS[0]}"
+            ); then
+              status=0
+            else
+              status=$$?
+            fi
             tail -n 100 "$$ROCM_WAN22_FN_ARTIFACT_DIR/pytest.log" > \
               "$$ROCM_WAN22_FN_ARTIFACT_DIR/pytest-summary.txt"
-            exit "$$status"
+            if [[ "$$status" -eq 0 ]]; then
+              if python -c 'import sys, xml.etree.ElementTree as ET
+            root = ET.parse(sys.argv[1]).getroot()
+            suites = [root] if root.tag == "testsuite" else list(root.findall("testsuite"))
+            tests = sum(int(suite.attrib.get("tests", "0")) for suite in suites)
+            skipped = sum(int(suite.attrib.get("skipped", "0")) for suite in suites)
+            if tests != 15 or skipped != 0:
+                print(
+                    f"Expected exactly fifteen executed Wan2.2 function 2-GPU tests; "
+                    f"reported tests={tests}, skipped={skipped}.",
+                    file=sys.stderr,
+                )
+                raise SystemExit(5)
+            ' "$$ROCM_WAN22_FN_ARTIFACT_DIR/pytest.xml"
+              then
+                status=0
+              else
+                status=$$?
+              fi
+            fi
+            (exit "$$status")
 
   - group: ":full_moon: Qwen-Image Expansion MI300 Nightly"
     steps:

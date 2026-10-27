@@ -1864,29 +1864,138 @@ def test_qwen_image_expansion_executes_junit_guard_before_exit(
 def test_wan22_function_has_separate_nonblocking_card_jobs() -> None:
     one = _find_step("Wan2.2 Function 1 GPU", AMD_NIGHTLY_PIPELINE)
     two = _find_step("Wan2.2 Function 2 GPU", AMD_NIGHTLY_PIPELINE)
-    assert one["agent_pool"] == "mi300_1"
-    assert two["agent_pool"] == "mi300_2"
-    for step, marker, sample in (
-        (one, "full_model and diffusion and rocm and MI325 and cards_1", "t2v_cpu_offload"),
-        (two, "full_model and diffusion and rocm and MI325 and cards_2", "cuda_t2v_cfg_parallel"),
-    ):
+    cases = (
+        (
+            one,
+            "mi300_1",
+            "full_model and diffusion and rocm and MI325 and cards_1",
+            "artifacts/rocm-wan22-function-1gpu/**/*",
+            (
+                "t2v_cpu_offload",
+                "i2v_cpu_offload",
+                "ti2v_cpu_offload",
+                "cuda_t2v_cache_dit",
+                "cuda_i2v_cache_dit",
+                "cuda_ti2v_cache_dit",
+            ),
+            "Expected exactly six executed Wan2.2 function 1-GPU tests",
+        ),
+        (
+            two,
+            "mi300_2",
+            "full_model and diffusion and rocm and MI325 and cards_2",
+            "artifacts/rocm-wan22-function-2gpu/**/*",
+            (
+                "cuda_t2v_cfg_parallel",
+                "cuda_t2v_ulysses_sp",
+                "cuda_t2v_tp_vae_patch",
+                "cuda_t2v_hsdp",
+                "cuda_t2v_ring_atten",
+                "cuda_i2v_cfg_parallel",
+                "cuda_i2v_ulysses_sp",
+                "cuda_i2v_tp_vae_patch",
+                "cuda_i2v_hsdp",
+                "cuda_i2v_ring_atten",
+                "cuda_ti2v_cfg_parallel",
+                "cuda_ti2v_ulysses_sp",
+                "cuda_ti2v_tp_vae_patch",
+                "cuda_ti2v_hsdp",
+                "cuda_ti2v_ring_atten",
+            ),
+            "Expected exactly fifteen executed Wan2.2 function 2-GPU tests",
+        ),
+    )
+    for step, agent_pool, marker, artifact_path, nodes, expected_message in cases:
         assert step["grade"] == "NonBlocking"
+        assert step["agent_pool"] == agent_pool
+        assert step["mirror_hardwares"] == ["amdproduction"]
         assert step["timeout_in_minutes"] == 180
+        assert step["source_file_dependencies"] == "diffusion_wan22_function"
         assert step["env"]["DIFFUSION_ATTENTION_BACKEND"] == "TORCH_SDPA"
+        assert step["artifact_paths"] == [artifact_path]
         commands = "\n".join(step["commands"])
         assert marker in commands
+        assert "--run-level full_model" in commands
         assert "--collect-only" in commands
         assert "exit 5" in commands
-        assert commands.count(f"test_wan22_diffusion_features[{sample}]") == 2
-        assert "test_wan22_expansion.py" in commands
-    one_commands = "\n".join(one["commands"])
-    assert "i2v_cpu_offload" in one_commands
-    assert "ti2v_cpu_offload" in one_commands
-    assert "cuda_ti2v_cache_dit" in one_commands
-    two_commands = "\n".join(two["commands"])
-    assert "cuda_i2v_ulysses_sp" in two_commands
-    assert "cuda_ti2v_ring_atten" in two_commands
+        assert "pytest.xml" in commands
+        for node in nodes:
+            assert commands.count(f"test_wan22_diffusion_features[{node}]") == 2
+        assert commands.count("--shard-id=0") == 2
+        assert commands.count("--num-shards=1") == 2
+        assert "Expected exactly $${#nodes[@]} Wan2.2 function" in commands
+        assert expected_message in commands
+    nightly = AMD_NIGHTLY_PIPELINE.read_text(encoding="utf-8")
+    assert nightly.count('label: "Wan2.2 Function 1 GPU"') == 1
+    assert nightly.count('label: "Wan2.2 Function 2 GPU"') == 1
     for pipeline_path in (AMD_READY_PIPELINE, AMD_MERGE_PIPELINE):
         text = pipeline_path.read_text(encoding="utf-8")
         assert "Wan2.2 Function 1 GPU" not in text
         assert "Wan2.2 Function 2 GPU" not in text
+
+
+@pytest.mark.parametrize(
+    (
+        "step_label",
+        "expected_tests",
+        "expected_message",
+        "job_id_prefix",
+    ),
+    [
+        (
+            "Wan2.2 Function 1 GPU",
+            6,
+            "Expected exactly six executed Wan2.2 function 1-GPU tests",
+            "wan22-function-1gpu-guard",
+        ),
+        (
+            "Wan2.2 Function 2 GPU",
+            15,
+            "Expected exactly fifteen executed Wan2.2 function 2-GPU tests",
+            "wan22-function-2gpu-guard",
+        ),
+    ],
+    ids=("1gpu", "2gpu"),
+)
+@pytest.mark.parametrize(
+    (
+        "pytest_status",
+        "tests_override",
+        "skipped",
+        "timeout_status",
+        "expected_status",
+    ),
+    [
+        (0, None, 0, None, 0),
+        (0, None, 1, None, 5),
+        (0, 0, 0, None, 5),
+        (1, None, 0, None, 1),
+        (0, None, 0, 124, 124),
+    ],
+    ids=("pass", "skipped", "zero-tests", "pytest-failure", "timeout"),
+)
+def test_wan22_function_executes_junit_guard_before_exit(
+    tmp_path: Path,
+    step_label: str,
+    expected_tests: int,
+    expected_message: str,
+    job_id_prefix: str,
+    pytest_status: int,
+    tests_override: int | None,
+    skipped: int,
+    timeout_status: int | None,
+    expected_status: int,
+) -> None:
+    _assert_nightly_junit_guard(
+        tmp_path,
+        step_label=step_label,
+        command_fragment='pytest -s -v "$${nodes[@]}"',
+        expected_message=expected_message,
+        artifact_env="ROCM_WAN22_FN_ARTIFACT_DIR",
+        job_id_prefix=job_id_prefix,
+        pytest_status=pytest_status,
+        tests=expected_tests if tests_override is None else tests_override,
+        skipped=skipped,
+        timeout_status=timeout_status,
+        expected_status=expected_status,
+    )
