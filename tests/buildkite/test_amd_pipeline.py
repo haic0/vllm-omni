@@ -2,7 +2,10 @@
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM-Omni project
 
 import json
+import os
 import re
+import subprocess
+import sys
 from importlib.util import find_spec, module_from_spec, spec_from_file_location
 from pathlib import Path
 from shlex import split
@@ -1527,3 +1530,89 @@ def test_qwen_image_backend_similarity_is_one_nonblocking_nightly_job() -> None:
     for pipeline_path in (AMD_READY_PIPELINE, AMD_MERGE_PIPELINE):
         text = pipeline_path.read_text(encoding="utf-8")
         assert "Qwen-Image Diffusers Backend Similarity" not in text
+
+
+@pytest.mark.parametrize(
+    ("pytest_status", "tests", "skipped", "timeout_status", "expected_status"),
+    [
+        (0, 1, 0, None, 0),
+        (0, 1, 1, None, 5),
+        (0, 0, 0, None, 5),
+        (1, 1, 0, None, 1),
+        (0, 1, 0, 124, 124),
+    ],
+    ids=("pass", "skipped", "zero-tests", "pytest-failure", "timeout"),
+)
+def test_qwen_image_backend_similarity_executes_junit_guard_before_exit(
+    tmp_path: Path,
+    pytest_status: int,
+    tests: int,
+    skipped: int,
+    timeout_status: int | None,
+    expected_status: int,
+) -> None:
+    step = _find_step("Qwen-Image Diffusers Backend Similarity", AMD_NIGHTLY_PIPELINE)
+    run_command = next(command for command in step["commands"] if "pytest -s -v -ra" in command)
+    assert "Expected exactly one executed Qwen-Image backend similarity test" in run_command
+
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+
+    def write_executable(name: str, body: str) -> None:
+        path = fake_bin / name
+        path.write_text(f"#!/bin/bash\nset -euo pipefail\n{body}", encoding="utf-8")
+        path.chmod(0o755)
+
+    write_executable("rocminfo", "exit 0\n")
+    write_executable(
+        "python3",
+        'if [[ "${1:-}" == "-" ]]; then cat >/dev/null; exit 0; fi\nexec "$REAL_PYTHON" "$@"\n',
+    )
+    write_executable("python", 'exec "$REAL_PYTHON" "$@"\n')
+    write_executable(
+        "timeout",
+        'if [[ -n "${FAKE_TIMEOUT_STATUS:-}" ]]; then exit "$FAKE_TIMEOUT_STATUS"; fi\n'
+        'while [[ "$1" != "pytest" ]]; do shift; done\nexec "$@"\n',
+    )
+    write_executable(
+        "pytest",
+        'xml_path=""\n'
+        'for arg in "$@"; do\n'
+        '  case "$arg" in --junitxml=*) xml_path="${arg#*=}" ;; esac\n'
+        "done\n"
+        'mkdir -p "$(dirname "$xml_path")"\n'
+        'printf \'<testsuite tests="%s" skipped="%s" failures="0" errors="0"/>\\n\' \\\n'
+        '  "$FAKE_JUNIT_TESTS" "$FAKE_JUNIT_SKIPPED" > "$xml_path"\n'
+        'echo "fake pytest status=$FAKE_PYTEST_STATUS"\n'
+        'exit "$FAKE_PYTEST_STATUS"\n',
+    )
+
+    artifact_dir = tmp_path / "artifacts"
+    artifact_dir.mkdir()
+    env = os.environ.copy()
+    env.update(
+        {
+            "PATH": f"{fake_bin}{os.pathsep}{env['PATH']}",
+            "REAL_PYTHON": sys.executable,
+            "VLLM_CI_DOCKER_DISABLED": "1",
+            "VLLM_CI_REQUIRE_PERSISTENT_HF_CACHE": "0",
+            "BUILDKITE_JOB_ID": f"qwen-image-guard-{tmp_path.name}",
+            "HF_HOME": str(tmp_path / "hf"),
+            "ROCM_QWEN_IMAGE_BACKEND_ARTIFACT_DIR": str(artifact_dir),
+            "FAKE_PYTEST_STATUS": str(pytest_status),
+            "FAKE_JUNIT_TESTS": str(tests),
+            "FAKE_JUNIT_SKIPPED": str(skipped),
+            "FAKE_TIMEOUT_STATUS": "" if timeout_status is None else str(timeout_status),
+            "TEST_COMMANDS": run_command.replace("$$", "$"),
+        }
+    )
+
+    result = subprocess.run(
+        ["bash", str(AMD_RUNNER)],
+        cwd=Path.cwd(),
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == expected_status, result.stdout + result.stderr

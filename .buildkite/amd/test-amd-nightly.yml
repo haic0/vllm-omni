@@ -1295,24 +1295,29 @@ steps:
               exit 5
             fi
           - |
-            set +e
-            timeout --signal=TERM --kill-after=2m 165m \
-              pytest -s -v -ra tests/e2e/accuracy/test_diffusers_backend_similarity.py \
-              -k "2i_matches_diffusers" \
-              -m "full_model and diffusion and rocm and MI325 and cards_1" --run-level full_model \
-              --junitxml="$$ROCM_QWEN_IMAGE_BACKEND_ARTIFACT_DIR/pytest.xml" \
-              2>&1 | tee "$$ROCM_QWEN_IMAGE_BACKEND_ARTIFACT_DIR/pytest.log"
-            status=$${PIPESTATUS[0]}
-            set -e
+            if (
+              trap - ERR
+              set +e
+              timeout --signal=TERM --kill-after=2m 165m \
+                pytest -s -v -ra tests/e2e/accuracy/test_diffusers_backend_similarity.py \
+                -k "2i_matches_diffusers" \
+                -m "full_model and diffusion and rocm and MI325 and cards_1" --run-level full_model \
+                --junitxml="$$ROCM_QWEN_IMAGE_BACKEND_ARTIFACT_DIR/pytest.xml" \
+                2>&1 | tee "$$ROCM_QWEN_IMAGE_BACKEND_ARTIFACT_DIR/pytest.log"
+              exit "$${PIPESTATUS[0]}"
+            ); then
+              status=0
+            else
+              status=$$?
+            fi
             if [[ -d tests/e2e/accuracy/artifacts ]]; then
               mkdir -p "$$ROCM_QWEN_IMAGE_BACKEND_ARTIFACT_DIR/accuracy"
               cp -a tests/e2e/accuracy/artifacts/. "$$ROCM_QWEN_IMAGE_BACKEND_ARTIFACT_DIR/accuracy/"
             fi
             tail -n 100 "$$ROCM_QWEN_IMAGE_BACKEND_ARTIFACT_DIR/pytest.log" > \
               "$$ROCM_QWEN_IMAGE_BACKEND_ARTIFACT_DIR/pytest-summary.txt"
-            exit "$$status"
-          - |
-            python -c 'import sys, xml.etree.ElementTree as ET
+            if [[ "$$status" -eq 0 ]]; then
+              if python -c 'import sys, xml.etree.ElementTree as ET
             root = ET.parse(sys.argv[1]).getroot()
             suites = [root] if root.tag == "testsuite" else list(root.findall("testsuite"))
             tests = sum(int(suite.attrib.get("tests", "0")) for suite in suites)
@@ -1325,3 +1330,10 @@ steps:
                 )
                 raise SystemExit(5)
             ' "$$ROCM_QWEN_IMAGE_BACKEND_ARTIFACT_DIR/pytest.xml"
+              then
+                status=0
+              else
+                status=$$?
+              fi
+            fi
+            (exit "$$status")
