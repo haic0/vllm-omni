@@ -1670,12 +1670,14 @@ def test_minicpmo_duplex_function_is_one_nonblocking_nightly_job() -> None:
         "test_duplex_admission_and_expiry_reaper",
         "test_duplex_soft_interrupt",
         "test_duplex_server_vad_hard_interrupt",
-        "test_window_continuous_input[basic-False]",
-        "test_window_continuous_input[context-False]",
-        "test_window_continuous_input[context-True]",
+        "test_window_continuous_input[basic-False-three-stage-single-gpu]",
+        "test_window_continuous_input[context-False-three-stage-single-gpu]",
+        "test_window_continuous_input[context-True-three-stage-single-gpu]",
     )
     for node in nodes:
         assert commands.count(node) == 2
+    assert commands.count("--shard-id=0") == 2
+    assert commands.count("--num-shards=1") == 2
     assert "Expected exactly $${#nodes[@]} MiniCPM-o duplex nodes" in commands
     assert "Expected exactly six executed MiniCPM-o duplex tests" in commands
     nightly = AMD_NIGHTLY_PIPELINE.read_text(encoding="utf-8")

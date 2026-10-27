@@ -1356,11 +1356,12 @@ steps:
               "tests/e2e/online_serving/test_minicpmo_4_5_duplex_expansion.py::test_duplex_admission_and_expiry_reaper"
               "tests/e2e/online_serving/test_minicpmo_4_5_duplex_expansion.py::test_duplex_soft_interrupt"
               "tests/e2e/online_serving/test_minicpmo_4_5_duplex_expansion.py::test_duplex_server_vad_hard_interrupt"
-              "tests/e2e/online_serving/test_minicpmo_4_5_window.py::test_window_continuous_input[basic-False]"
-              "tests/e2e/online_serving/test_minicpmo_4_5_window.py::test_window_continuous_input[context-False]"
-              "tests/e2e/online_serving/test_minicpmo_4_5_window.py::test_window_continuous_input[context-True]"
+              "tests/e2e/online_serving/test_minicpmo_4_5_window.py::test_window_continuous_input[basic-False-three-stage-single-gpu]"
+              "tests/e2e/online_serving/test_minicpmo_4_5_window.py::test_window_continuous_input[context-False-three-stage-single-gpu]"
+              "tests/e2e/online_serving/test_minicpmo_4_5_window.py::test_window_continuous_input[context-True-three-stage-single-gpu]"
             )
             pytest --collect-only -q "$${nodes[@]}" \
+              --shard-id=0 --num-shards=1 \
               -m "full_model and omni and rocm and MI325 and cards_1" --run-level full_model \
               > "$$ROCM_MINICPMO_DUPLEX_ARTIFACT_DIR/collection.txt"
             count=$$(awk '/::/ { n++ } END { print n + 0 }' \
@@ -1385,12 +1386,13 @@ steps:
                 "tests/e2e/online_serving/test_minicpmo_4_5_duplex_expansion.py::test_duplex_admission_and_expiry_reaper"
                 "tests/e2e/online_serving/test_minicpmo_4_5_duplex_expansion.py::test_duplex_soft_interrupt"
                 "tests/e2e/online_serving/test_minicpmo_4_5_duplex_expansion.py::test_duplex_server_vad_hard_interrupt"
-                "tests/e2e/online_serving/test_minicpmo_4_5_window.py::test_window_continuous_input[basic-False]"
-                "tests/e2e/online_serving/test_minicpmo_4_5_window.py::test_window_continuous_input[context-False]"
-                "tests/e2e/online_serving/test_minicpmo_4_5_window.py::test_window_continuous_input[context-True]"
+                "tests/e2e/online_serving/test_minicpmo_4_5_window.py::test_window_continuous_input[basic-False-three-stage-single-gpu]"
+                "tests/e2e/online_serving/test_minicpmo_4_5_window.py::test_window_continuous_input[context-False-three-stage-single-gpu]"
+                "tests/e2e/online_serving/test_minicpmo_4_5_window.py::test_window_continuous_input[context-True-three-stage-single-gpu]"
               )
               timeout --signal=TERM --kill-after=2m 165m \
                 pytest -s -v "$${nodes[@]}" \
+                --shard-id=0 --num-shards=1 \
                 -m "full_model and omni and rocm and MI325 and cards_1" --run-level full_model \
                 --junitxml="$$ROCM_MINICPMO_DUPLEX_ARTIFACT_DIR/pytest.xml" \
                 2>&1 | tee "$$ROCM_MINICPMO_DUPLEX_ARTIFACT_DIR/pytest.log"
