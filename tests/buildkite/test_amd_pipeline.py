@@ -658,8 +658,15 @@ _ROCM_MIGRATED_AMD_GPU_JOBS = (
         "Omni Model Test Qwen3-Omni",
         AMD_MERGE_PIPELINE,
         "Blocking",
-        18,
+        17,
         "advanced_model and rocm and MI325 and not nvidia_only",
+    ),
+    (
+        "Qwen3-Omni SHM Leak Test",
+        AMD_MERGE_PIPELINE,
+        "NonBlocking",
+        1,
+        "advanced_model and rocm and MI325 and cards_2 and not nvidia_only",
     ),
     (
         "Qwen3-TTS Base E2E Test",
@@ -1549,6 +1556,7 @@ def test_qwen_image_backend_similarity_is_one_nonblocking_nightly_job() -> None:
 def _assert_nightly_junit_guard(
     tmp_path: Path,
     *,
+    pipeline_path: Path = AMD_NIGHTLY_PIPELINE,
     step_label: str,
     command_fragment: str,
     expected_message: str,
@@ -1560,7 +1568,7 @@ def _assert_nightly_junit_guard(
     timeout_status: int | None,
     expected_status: int,
 ) -> None:
-    step = _find_step(step_label, AMD_NIGHTLY_PIPELINE)
+    step = _find_step(step_label, pipeline_path)
     run_command = next(command for command in step["commands"] if command_fragment in command)
     assert expected_message in run_command
 
@@ -2001,13 +2009,65 @@ def test_wan22_function_executes_junit_guard_before_exit(
     )
 
 
-def test_qwen3_omni_merge_includes_the_shm_leak_case() -> None:
-    """The existing two-GPU MERGE lane also runs the async-chunk SHM leak check."""
-    step = _find_step("Omni Model Test Qwen3-Omni", AMD_MERGE_PIPELINE)
+def test_qwen3_omni_shm_leak_is_a_separate_nonblocking_merge_job() -> None:
+    blocking_step = _find_step("Omni Model Test Qwen3-Omni", AMD_MERGE_PIPELINE)
     shm_path = "tests/e2e/online_serving/test_qwen3_omni_shm_leak.py"
-    commands_with_shm = [command for command in step["commands"] if shm_path in command]
+    blocking_commands = "\n".join(blocking_step["commands"])
+
+    assert blocking_step["agent_pool"] == "mi300_2"
+    assert blocking_step["grade"] == "Blocking"
+    assert "assert-pytest-collection.sh 17" in blocking_commands
+    assert shm_path not in blocking_commands
+
+    step = _find_step("Qwen3-Omni SHM Leak Test", AMD_MERGE_PIPELINE)
+    commands = "\n".join(step["commands"])
 
     assert step["agent_pool"] == "mi300_2"
-    assert step["grade"] == "Blocking"
-    assert len(commands_with_shm) == 2
-    assert "assert-pytest-collection.sh 18" in commands_with_shm[0]
+    assert step["mirror_hardwares"] == ["amdproduction"]
+    assert step["grade"] == "NonBlocking"
+    assert step["timeout_in_minutes"] == 50
+    assert step["artifact_paths"] == ["artifacts/rocm-qwen3-omni-shm-leak/**/*"]
+    assert commands.count(shm_path) == 2
+    assert commands.count("--shard-id=0 --num-shards=1") == 2
+    assert "assert-pytest-collection.sh 1" in commands
+    assert "timeout --signal=TERM --kill-after=2m 45m" in commands
+    assert "PIPESTATUS[0]" in commands
+    assert "pytest.xml" in commands
+    assert "pytest.log" in commands
+    assert "pytest-summary.txt" in commands
+    assert "Expected exactly one executed Qwen3-Omni SHM leak test" in commands
+
+
+@pytest.mark.parametrize(
+    ("pytest_status", "tests", "skipped", "timeout_status", "expected_status"),
+    [
+        (0, 1, 0, None, 0),
+        (0, 1, 1, None, 5),
+        (0, 0, 0, None, 5),
+        (1, 1, 0, None, 1),
+        (0, 1, 0, 124, 124),
+    ],
+    ids=("pass", "skipped", "zero-tests", "pytest-failure", "timeout"),
+)
+def test_qwen3_omni_shm_leak_executes_junit_guard_before_exit(
+    tmp_path: Path,
+    pytest_status: int,
+    tests: int,
+    skipped: int,
+    timeout_status: int | None,
+    expected_status: int,
+) -> None:
+    _assert_nightly_junit_guard(
+        tmp_path,
+        pipeline_path=AMD_MERGE_PIPELINE,
+        step_label="Qwen3-Omni SHM Leak Test",
+        command_fragment="pytest -s -v -ra",
+        expected_message="Expected exactly one executed Qwen3-Omni SHM leak test",
+        artifact_env="ROCM_QWEN3_OMNI_SHM_ARTIFACT_DIR",
+        job_id_prefix="qwen3-omni-shm-guard",
+        pytest_status=pytest_status,
+        tests=tests,
+        skipped=skipped,
+        timeout_status=timeout_status,
+        expected_status=expected_status,
+    )
