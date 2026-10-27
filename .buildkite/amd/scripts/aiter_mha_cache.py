@@ -929,7 +929,8 @@ def download_from_source(
             source.build_id,
         ]
         if source.job_id:
-            command.extend(["--job", source.job_id])
+            # Buildkite scopes a download to a job ID through --step.
+            command.extend(["--step", source.job_id])
         try:
             completed = runner(
                 command,

@@ -776,7 +776,7 @@ def test_same_build_download_requires_the_publisher_job(tmp_path: Path) -> None:
         current_checkout=CHECKOUT,
         ldd_ok=lambda _path: True,
     )
-    assert commands[0][-4:] == ["--build", "current", "--job", "job-fa"]
+    assert commands[0][-4:] == ["--build", "current", "--step", "job-fa"]
     assert (restored / cache.module_filename()).read_bytes().startswith(b"same-build-module")
 
     other_job = cache.BuildSource(
@@ -799,7 +799,7 @@ def test_same_build_download_requires_the_publisher_job(tmp_path: Path) -> None:
         current_checkout=CHECKOUT,
         ldd_ok=lambda _path: True,
     )
-    assert commands[1][-2:] == ["--job", "job-other"]
+    assert commands[1][-2:] == ["--step", "job-other"]
     assert not (rejected / cache.module_filename()).exists()
 
 
@@ -814,7 +814,7 @@ def test_upload_targets_only_the_current_build_scoped_artifact(tmp_path: Path) -
     command, cwd = calls[0]
     assert command[:3] == ["buildkite-agent", "artifact", "upload"]
     assert command[3] == f"{cache.artifact_prefix(_identity()).as_posix()}/*"
-    assert "--job" not in command
+    assert "--step" not in command
     assert "--build" not in command
     assert cwd == tmp_path
 
