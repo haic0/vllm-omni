@@ -2071,3 +2071,81 @@ def test_qwen3_omni_shm_leak_executes_junit_guard_before_exit(
         timeout_status=timeout_status,
         expected_status=expected_status,
     )
+
+
+_QWEN3_OMNI_READY_NODES = (
+    "tests/e2e/online_serving/test_qwen3_omni.py::test_mix_to_text_audio_001[default-rocm]",
+    "tests/e2e/online_serving/test_qwen3_omni.py::test_text_to_text_001[default-rocm]",
+    "tests/e2e/online_serving/test_qwen3_omni.py::test_thinker_prefix_caching_text_output[default]",
+    "tests/e2e/online_serving/test_qwen3_omni.py::test_thinker_prefix_caching_audio_output[default]",
+    "tests/e2e/online_serving/test_qwen3_omni.py::"
+    "test_thinker_prefix_caching_async_chunk_identical[prefix_cache_async_chunk]",
+    "tests/e2e/online_serving/test_qwen3_omni.py::"
+    "test_thinker_prefix_caching_async_chunk_shared_image_prefix[prefix_cache_async_chunk]",
+    "tests/e2e/online_serving/test_qwen3_omni.py::test_completions_rejected_for_thinker_talker[default-rocm]",
+    "tests/e2e/online_serving/test_qwen3_omni.py::test_batched_completions_text[default-rocm]",
+    "tests/e2e/online_serving/test_qwen3_omni.py::test_batched_completions_audio_out[default-rocm]",
+    "tests/e2e/online_serving/test_qwen3_omni.py::test_batched_completions_with_bad_values[sad_opts0-default-rocm]",
+    "tests/e2e/online_serving/test_qwen3_omni.py::test_batched_completions_with_bad_values[sad_opts1-default-rocm]",
+)
+
+
+def test_qwen3_omni_ready_selects_eleven_core_model_nodes() -> None:
+    """READY runs the online core_model cases only, and only on two MI325 cards."""
+    step = _find_step("Omni Model Test Qwen3-Omni", AMD_READY_PIPELINE)
+    command = "\n".join(step["commands"])
+
+    assert step["agent_pool"] == "mi300_2"
+    assert step["mirror_hardwares"] == ["amdproduction"]
+    assert step["grade"] == "NonBlocking"
+    assert step["timeout_in_minutes"] == 25
+    assert step["artifact_paths"] == ["artifacts/rocm-qwen3-omni-ready/**/*"]
+    assert "test_qwen3_omni_thinking.py" not in command
+    assert "offline_inference" not in command
+    selector = "core_model and rocm and MI325 and cards_2 and not nvidia_only"
+    assert command.count(selector) == 2
+    assert command.count("--shard-id=0 --num-shards=1") == 2
+    assert "timeout --signal=TERM --kill-after=2m 20m" in command
+    assert "PIPESTATUS[0]" in command
+    assert "pytest.xml" in command
+    assert "pytest.log" in command
+    assert "pytest-summary.txt" in command
+    assert "Expected exactly 11 executed Qwen3-Omni READY tests" in command
+    for node in _QWEN3_OMNI_READY_NODES:
+        assert node in command
+    assert command.count("tests/e2e/online_serving/test_qwen3_omni.py::") == len(_QWEN3_OMNI_READY_NODES)
+
+
+@pytest.mark.parametrize(
+    ("pytest_status", "tests", "skipped", "timeout_status", "expected_status"),
+    [
+        (0, 11, 0, None, 0),
+        (0, 11, 1, None, 5),
+        (0, 0, 0, None, 5),
+        (1, 11, 0, None, 1),
+        (0, 11, 0, 124, 124),
+    ],
+    ids=("pass", "skipped", "zero-tests", "pytest-failure", "timeout"),
+)
+def test_qwen3_omni_ready_executes_junit_guard_before_exit(
+    tmp_path: Path,
+    pytest_status: int,
+    tests: int,
+    skipped: int,
+    timeout_status: int | None,
+    expected_status: int,
+) -> None:
+    _assert_nightly_junit_guard(
+        tmp_path,
+        pipeline_path=AMD_READY_PIPELINE,
+        step_label="Omni Model Test Qwen3-Omni",
+        command_fragment="pytest -s -v -ra",
+        expected_message="Expected exactly 11 executed Qwen3-Omni READY tests",
+        artifact_env="ROCM_QWEN3_OMNI_READY_ARTIFACT_DIR",
+        job_id_prefix="qwen3-omni-ready-guard",
+        pytest_status=pytest_status,
+        tests=tests,
+        skipped=skipped,
+        timeout_status=timeout_status,
+        expected_status=expected_status,
+    )
