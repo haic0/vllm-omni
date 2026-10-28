@@ -477,6 +477,79 @@ steps:
         --run-level "core_model"
       ENGINE_ABORT_READY
 
+- label: "ROCm · One-Card Worker GPU Test"
+  agent_pool: mi300_1
+  depends_on: amd-build
+  mirror_hardwares: [amdproduction]
+  grade: NonBlocking
+  # Not part of R2-01. The step is 30 minutes; the command leaves five minutes
+  # for the runner preflight, matching the R2-02 budget split.
+  timeout_in_minutes: 30
+  artifact_paths:
+    - "artifacts/rocm-worker-one-card/**/*"
+  commands:
+    - |
+      timeout --signal=TERM --kill-after=1m 25m bash <<'WORKER_READY'
+      set -euo pipefail
+      export WORKER_READY_ARTIFACT_DIR="$${BUILDKITE_BUILD_CHECKOUT_PATH:?}/artifacts/rocm-worker-one-card"
+      mkdir -p "$$WORKER_READY_ARTIFACT_DIR"
+      nodes=(
+            "tests/worker/test_batched_omni_output.py::test_async_packed_snapshot_survives_source_reuse[1]"
+            "tests/worker/test_batched_omni_output.py::test_async_packed_snapshot_survives_source_reuse[3]"
+            "tests/worker/test_batched_omni_output.py::test_mtp_preserves_rows_and_snapshot_without_cuda_sync[offsets0]"
+            "tests/worker/test_batched_omni_output.py::test_mtp_preserves_rows_and_snapshot_without_cuda_sync[offsets1]"
+            "tests/worker/test_batched_omni_output.py::test_mixed_stop_flags_do_not_synchronize_cuda"
+            "tests/worker/test_gpu_generation_async_output.py::test_async_generation_owns_output_and_request_mapping[tensor]"
+            "tests/worker/test_gpu_generation_async_output.py::test_async_generation_owns_output_and_request_mapping[list]"
+            "tests/worker/test_gpu_generation_async_output.py::test_async_generation_owns_output_and_request_mapping[mapping]"
+            "tests/worker/test_gpu_generation_async_output.py::test_async_generation_preserves_none_rows"
+            "tests/worker/test_gpu_generation_async_output.py::test_full_payload_accumulation_keeps_synchronous_host_copy[False]"
+            "tests/worker/test_gpu_generation_async_output.py::test_full_payload_accumulation_keeps_synchronous_host_copy[True]"
+            "tests/worker/test_gpu_generation_async_output.py::test_owned_generation_output_skips_device_snapshot_and_retains_sources[tensor]"
+            "tests/worker/test_gpu_generation_async_output.py::test_owned_generation_output_skips_device_snapshot_and_retains_sources[list]"
+            "tests/worker/test_gpu_generation_async_output.py::test_owned_generation_output_skips_device_snapshot_and_retains_sources[mapping]"
+            "tests/worker/test_gpu_generation_async_output.py::test_owned_generation_output_preserves_none_rows"
+            "tests/worker/test_gpu_generation_async_output.py::test_outer_graph_execution_keeps_snapshot_even_for_owned_model"
+            "tests/worker/test_gpu_generation_async_output.py::test_discarded_output_records_copy_stream[False]"
+            "tests/worker/test_gpu_generation_async_output.py::test_discarded_output_records_copy_stream[True]"
+            "tests/worker/test_gpu_generation_async_output.py::test_dense_waveforms_share_one_host_allocation[False-False]"
+            "tests/worker/test_gpu_generation_async_output.py::test_dense_waveforms_share_one_host_allocation[False-True]"
+            "tests/worker/test_gpu_generation_async_output.py::test_dense_waveforms_share_one_host_allocation[True-False]"
+            "tests/worker/test_gpu_generation_async_output.py::test_dense_waveforms_share_one_host_allocation[True-True]"
+            "tests/worker_v2/test_eager_frame_kernels.py::test_settled_frames_match_torch[step_dtype0]"
+            "tests/worker_v2/test_eager_frame_kernels.py::test_settled_frames_match_torch[step_dtype1]"
+            "tests/worker_v2/test_eager_frame_kernels.py::test_codec_graph_inputs_match_the_copies[3-8-1]"
+            "tests/worker_v2/test_eager_frame_kernels.py::test_codec_graph_inputs_match_the_copies[8-8-1]"
+            "tests/worker_v2/test_eager_frame_kernels.py::test_codec_graph_inputs_match_the_copies[2-4-25]"
+            "tests/worker_v2/test_eager_frame_kernels.py::test_eager_post_fills_codec_graph_inputs_and_scratch[3-8]"
+            "tests/worker_v2/test_eager_frame_kernels.py::test_eager_post_fills_codec_graph_inputs_and_scratch[8-8]"
+            "tests/worker_v2/test_eager_frame_kernels.py::test_history_scatter_preserves_independent_storage_and_offsets"
+            "tests/worker_v2/test_eager_frame_kernels.py::test_codec_direct_inputs_wait_for_slow_side_stream"
+            "tests/worker_v2/test_eager_frame_kernels.py::test_batched_history_recording_preserves_ragged_reordered_requests"
+      )
+      printf '%s\n' "$${nodes[@]}" | sort > /tmp/worker-ready-expected.txt
+      pytest -q \
+        tests/worker/test_batched_omni_output.py \
+        tests/worker/test_gpu_generation_async_output.py \
+        tests/worker_v2/test_eager_frame_kernels.py \
+        -m "core_model and rocm and MI325 and cards_1" \
+        --run-level "core_model" \
+        --collect-only \
+        | sed -n 's/^\(tests\/.*::.*\)/\1/p' \
+        | sort > /tmp/worker-ready-collected.txt
+      if ! diff -u /tmp/worker-ready-expected.txt /tmp/worker-ready-collected.txt; then
+        echo "One-card worker READY collection drifted from the 32 MI325 nodes" >&2
+        exit 1
+      fi
+      pytest -s -v \
+        tests/worker/test_batched_omni_output.py \
+        tests/worker/test_gpu_generation_async_output.py \
+        tests/worker_v2/test_eager_frame_kernels.py \
+        -m "core_model and rocm and MI325 and cards_1" \
+        --run-level "core_model" \
+        --junitxml="$$WORKER_READY_ARTIFACT_DIR/pytest.xml"
+      WORKER_READY
+
 - label: "ROCm · Entrypoints GPU Coverage (R2-02)"
   agent_pool: mi300_1
   depends_on: amd-build

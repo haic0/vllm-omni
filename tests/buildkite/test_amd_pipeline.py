@@ -3126,3 +3126,110 @@ def test_qwen3_tts_ready_pins_selected_customvoice_core_nodes() -> None:
         assert command.count(node) == 1
     assert "diff -u /tmp/qwen3-tts-ready-expected.txt" in command
     assert source.count('"rocm": "MI325"') == 4
+
+
+_WORKER_ONE_CARD_MARKER = "core_model and rocm and MI325 and cards_1"
+_WORKER_ONE_CARD_FILES = (
+    "tests/worker/test_batched_omni_output.py",
+    "tests/worker/test_gpu_generation_async_output.py",
+    "tests/worker_v2/test_eager_frame_kernels.py",
+)
+_WORKER_ONE_CARD_EXCLUDED = (
+    "tests/worker_v2/test_capture_query_bound_gpu.py",
+    "tests/worker_v2/test_decode_query_bound_gpu.py",
+    "tests/worker/test_gpu_ar_model_runner_cuda.py",
+)
+_WORKER_ONE_CARD_NODES = (
+    "tests/worker/test_batched_omni_output.py::test_async_packed_snapshot_survives_source_reuse[1]",
+    "tests/worker/test_batched_omni_output.py::test_async_packed_snapshot_survives_source_reuse[3]",
+    "tests/worker/test_batched_omni_output.py::test_mtp_preserves_rows_and_snapshot_without_cuda_sync[offsets0]",
+    "tests/worker/test_batched_omni_output.py::test_mtp_preserves_rows_and_snapshot_without_cuda_sync[offsets1]",
+    "tests/worker/test_batched_omni_output.py::test_mixed_stop_flags_do_not_synchronize_cuda",
+    "tests/worker/test_gpu_generation_async_output.py::test_async_generation_owns_output_and_request_mapping[tensor]",
+    "tests/worker/test_gpu_generation_async_output.py::test_async_generation_owns_output_and_request_mapping[list]",
+    "tests/worker/test_gpu_generation_async_output.py::test_async_generation_owns_output_and_request_mapping[mapping]",
+    "tests/worker/test_gpu_generation_async_output.py::test_async_generation_preserves_none_rows",
+    "tests/worker/test_gpu_generation_async_output.py::"
+    "test_full_payload_accumulation_keeps_synchronous_host_copy[False]",
+    "tests/worker/test_gpu_generation_async_output.py::"
+    "test_full_payload_accumulation_keeps_synchronous_host_copy[True]",
+    "tests/worker/test_gpu_generation_async_output.py::"
+    "test_owned_generation_output_skips_device_snapshot_and_retains_sources[tensor]",
+    "tests/worker/test_gpu_generation_async_output.py::"
+    "test_owned_generation_output_skips_device_snapshot_and_retains_sources[list]",
+    "tests/worker/test_gpu_generation_async_output.py::"
+    "test_owned_generation_output_skips_device_snapshot_and_retains_sources[mapping]",
+    "tests/worker/test_gpu_generation_async_output.py::test_owned_generation_output_preserves_none_rows",
+    "tests/worker/test_gpu_generation_async_output.py::test_outer_graph_execution_keeps_snapshot_even_for_owned_model",
+    "tests/worker/test_gpu_generation_async_output.py::test_discarded_output_records_copy_stream[False]",
+    "tests/worker/test_gpu_generation_async_output.py::test_discarded_output_records_copy_stream[True]",
+    "tests/worker/test_gpu_generation_async_output.py::test_dense_waveforms_share_one_host_allocation[False-False]",
+    "tests/worker/test_gpu_generation_async_output.py::test_dense_waveforms_share_one_host_allocation[False-True]",
+    "tests/worker/test_gpu_generation_async_output.py::test_dense_waveforms_share_one_host_allocation[True-False]",
+    "tests/worker/test_gpu_generation_async_output.py::test_dense_waveforms_share_one_host_allocation[True-True]",
+    "tests/worker_v2/test_eager_frame_kernels.py::test_settled_frames_match_torch[step_dtype0]",
+    "tests/worker_v2/test_eager_frame_kernels.py::test_settled_frames_match_torch[step_dtype1]",
+    "tests/worker_v2/test_eager_frame_kernels.py::test_codec_graph_inputs_match_the_copies[3-8-1]",
+    "tests/worker_v2/test_eager_frame_kernels.py::test_codec_graph_inputs_match_the_copies[8-8-1]",
+    "tests/worker_v2/test_eager_frame_kernels.py::test_codec_graph_inputs_match_the_copies[2-4-25]",
+    "tests/worker_v2/test_eager_frame_kernels.py::test_eager_post_fills_codec_graph_inputs_and_scratch[3-8]",
+    "tests/worker_v2/test_eager_frame_kernels.py::test_eager_post_fills_codec_graph_inputs_and_scratch[8-8]",
+    "tests/worker_v2/test_eager_frame_kernels.py::test_history_scatter_preserves_independent_storage_and_offsets",
+    "tests/worker_v2/test_eager_frame_kernels.py::test_codec_direct_inputs_wait_for_slow_side_stream",
+    "tests/worker_v2/test_eager_frame_kernels.py::test_batched_history_recording_preserves_ragged_reordered_requests",
+)
+
+
+def test_worker_one_card_ready_stays_outside_r2_01() -> None:
+    """READY adds one NonBlocking MI300 job for the collected one-card nodes.
+
+    Local collection of the three files with the MI325 marker returned these
+    32 ids. R2-01 still collects 1416 model-executor nodes and does not run them.
+    """
+    step = _find_step("ROCm · One-Card Worker GPU Test", AMD_READY_PIPELINE)
+    command = "\n".join(step["commands"])
+    body = command.split("nodes=(", 1)[1].split(")", 1)[0]
+    quoted = tuple(re.findall(r'"(tests/[^"]+)"', body))
+
+    assert step["agent_pool"] == "mi300_1"
+    assert step["mirror_hardwares"] == ["amdproduction"]
+    assert step["grade"] == "NonBlocking"
+    assert step["timeout_in_minutes"] == 30
+    assert step["artifact_paths"] == ["artifacts/rocm-worker-one-card/**/*"]
+    assert "timeout --signal=TERM --kill-after=1m 25m" in command
+    assert "timeout 30m" not in command
+    assert _marker_expressions(step) == [
+        _WORKER_ONE_CARD_MARKER,
+        _WORKER_ONE_CARD_MARKER,
+    ]
+    assert command.count('--run-level "core_model"') == 2
+    assert quoted == _WORKER_ONE_CARD_NODES
+    assert len(_WORKER_ONE_CARD_NODES) == 32
+    for path in _WORKER_ONE_CARD_FILES:
+        assert sum(node.startswith(path + "::") for node in quoted) >= 1
+        assert command.count(f"\n  {path} \\\n") == 2
+    for path in _WORKER_ONE_CARD_EXCLUDED:
+        assert path not in command
+        assert "MI325" not in Path(path).read_text(encoding="utf-8")
+    assert "diff -u /tmp/worker-ready-expected.txt" in command
+    assert "--junitxml=" in command
+    assert "pytest.log" not in command
+    assert "pytest-summary.txt" not in command
+    assert "PIPESTATUS" not in command
+    assert "tee " not in command
+
+    for path in _WORKER_ONE_CARD_FILES[:2]:
+        source = Path(path).read_text(encoding="utf-8")
+        assert source.count('res={"cuda": "L4", "rocm": "MI325"}, num_cards=1') == 1
+    eager = Path(_WORKER_ONE_CARD_FILES[2]).read_text(encoding="utf-8")
+    assert eager.count('res={"cuda": "L4", "rocm": "MI325"}, num_cards=1') == 6
+
+    r2_01 = _find_step(
+        "ROCm · Model Executor GPU Coverage (R2-01) · Shard %N/%t",
+        AMD_READY_PIPELINE,
+    )
+    r2_01_command = "\n".join(r2_01["commands"])
+    assert "assert-pytest-collection.sh 1416" in r2_01_command
+    assert "tests/model_executor/" in r2_01_command
+    for path in _WORKER_ONE_CARD_FILES:
+        assert path not in r2_01_command
