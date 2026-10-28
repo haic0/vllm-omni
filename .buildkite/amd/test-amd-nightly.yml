@@ -1324,6 +1324,130 @@ steps:
             fi
             (exit "$$status")
 
+  - group: ":full_moon: Entrypoints Full MI300 Nightly"
+    steps:
+      - label: "Qwen3-Omni Duplex Playback"
+        agent_pool: mi300_2
+        mirror_hardwares: [amdproduction]
+        grade: NonBlocking
+        timeout_in_minutes: 180
+        source_file_dependencies: omni_qwen3_omni_duplex_playback_function
+        artifact_paths:
+          - artifacts/rocm-qwen3-omni-duplex-playback/**/*
+        commands:
+          - export VLLM_WORKER_MULTIPROC_METHOD=spawn
+          - export ROCM_QWEN3_OMNI_DUPLEX_ARTIFACT_DIR="$${BUILDKITE_BUILD_CHECKOUT_PATH:?}/artifacts/rocm-qwen3-omni-duplex-playback"
+          - mkdir -p "$$ROCM_QWEN3_OMNI_DUPLEX_ARTIFACT_DIR"
+          - |
+            set -euo pipefail
+            bash .buildkite/amd/scripts/assert-pytest-collection.sh 40 \
+              tests/entrypoints/openai_api/test_qwen3_omni_realtime_websocket.py::TestQwen3OmniDuplexPlayback::test_speech_interrupts_playback_full \
+              -m 'full_model and omni and rocm and MI325 and cards_2 and not nvidia_only' \
+              --run-level full_model \
+              --shard-id=0 --num-shards=1 \
+              2>&1 | tee "$$ROCM_QWEN3_OMNI_DUPLEX_ARTIFACT_DIR/collection.log"
+          - |
+            if (
+              trap - ERR
+              set +e
+              timeout --signal=TERM --kill-after=2m 165m \
+                pytest -s -v -ra \
+                tests/entrypoints/openai_api/test_qwen3_omni_realtime_websocket.py::TestQwen3OmniDuplexPlayback::test_speech_interrupts_playback_full \
+                -m 'full_model and omni and rocm and MI325 and cards_2 and not nvidia_only' \
+                --run-level full_model \
+                --shard-id=0 --num-shards=1 \
+                --junitxml="$$ROCM_QWEN3_OMNI_DUPLEX_ARTIFACT_DIR/pytest.xml" \
+                2>&1 | tee "$$ROCM_QWEN3_OMNI_DUPLEX_ARTIFACT_DIR/pytest.log"
+              exit "$${PIPESTATUS[0]}"
+            ); then
+              status=0
+            else
+              status=$$?
+            fi
+            tail -n 100 "$$ROCM_QWEN3_OMNI_DUPLEX_ARTIFACT_DIR/pytest.log" > \
+              "$$ROCM_QWEN3_OMNI_DUPLEX_ARTIFACT_DIR/pytest-summary.txt"
+            if [[ "$$status" -eq 0 ]]; then
+              if python -c 'import sys, xml.etree.ElementTree as ET
+            root = ET.parse(sys.argv[1]).getroot()
+            suites = [root] if root.tag == "testsuite" else list(root.findall("testsuite"))
+            tests = sum(int(suite.attrib.get("tests", "0")) for suite in suites)
+            skipped = sum(int(suite.attrib.get("skipped", "0")) for suite in suites)
+            if tests != 40 or skipped != 0:
+                print(
+                    f"Expected exactly 40 executed Qwen3-Omni duplex playback tests; "
+                    f"reported tests={tests}, skipped={skipped}.",
+                    file=sys.stderr,
+                )
+                raise SystemExit(5)
+            ' "$$ROCM_QWEN3_OMNI_DUPLEX_ARTIFACT_DIR/pytest.xml"
+              then
+                status=0
+              else
+                status=$$?
+              fi
+            fi
+            (exit "$$status")
+
+      - label: "BAGEL Sleep Mode"
+        agent_pool: mi300_2
+        mirror_hardwares: [amdproduction]
+        grade: NonBlocking
+        timeout_in_minutes: 180
+        source_file_dependencies: omni_bagel_sleep_function
+        artifact_paths:
+          - artifacts/rocm-bagel-sleep/**/*
+        commands:
+          - export ROCM_BAGEL_SLEEP_ARTIFACT_DIR="$${BUILDKITE_BUILD_CHECKOUT_PATH:?}/artifacts/rocm-bagel-sleep"
+          - mkdir -p "$$ROCM_BAGEL_SLEEP_ARTIFACT_DIR"
+          - |
+            set -euo pipefail
+            bash .buildkite/amd/scripts/assert-pytest-collection.sh 3 \
+              tests/entrypoints/test_omni_sleep_mode.py::TestBagelDiffusionSleepMode \
+              -m 'full_model and omni and rocm and MI325 and cards_2 and not nvidia_only' \
+              --run-level full_model \
+              --shard-id=0 --num-shards=1 \
+              2>&1 | tee "$$ROCM_BAGEL_SLEEP_ARTIFACT_DIR/collection.log"
+          - |
+            if (
+              trap - ERR
+              set +e
+              timeout --signal=TERM --kill-after=2m 165m \
+                pytest -s -v -ra tests/entrypoints/test_omni_sleep_mode.py::TestBagelDiffusionSleepMode \
+                -m 'full_model and omni and rocm and MI325 and cards_2 and not nvidia_only' \
+                --run-level full_model \
+                --shard-id=0 --num-shards=1 \
+                --junitxml="$$ROCM_BAGEL_SLEEP_ARTIFACT_DIR/pytest.xml" \
+                2>&1 | tee "$$ROCM_BAGEL_SLEEP_ARTIFACT_DIR/pytest.log"
+              exit "$${PIPESTATUS[0]}"
+            ); then
+              status=0
+            else
+              status=$$?
+            fi
+            tail -n 100 "$$ROCM_BAGEL_SLEEP_ARTIFACT_DIR/pytest.log" > \
+              "$$ROCM_BAGEL_SLEEP_ARTIFACT_DIR/pytest-summary.txt"
+            if [[ "$$status" -eq 0 ]]; then
+              if python -c 'import sys, xml.etree.ElementTree as ET
+            root = ET.parse(sys.argv[1]).getroot()
+            suites = [root] if root.tag == "testsuite" else list(root.findall("testsuite"))
+            tests = sum(int(suite.attrib.get("tests", "0")) for suite in suites)
+            skipped = sum(int(suite.attrib.get("skipped", "0")) for suite in suites)
+            if tests != 3 or skipped != 0:
+                print(
+                    f"Expected exactly three executed BAGEL sleep-mode tests; "
+                    f"reported tests={tests}, skipped={skipped}.",
+                    file=sys.stderr,
+                )
+                raise SystemExit(5)
+            ' "$$ROCM_BAGEL_SLEEP_ARTIFACT_DIR/pytest.xml"
+              then
+                status=0
+              else
+                status=$$?
+              fi
+            fi
+            (exit "$$status")
+
   - group: ":full_moon: Wan2.2 Function 1 GPU Group"
     steps:
       - label: "Wan2.2 Function 1 GPU"

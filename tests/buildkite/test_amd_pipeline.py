@@ -21,6 +21,7 @@ AMD_WEEKLY_PIPELINE = Path(".buildkite/amd/test-amd-weekly.yml")
 AMD_READY_PIPELINE = Path(".buildkite/amd/test-amd-ready.yml")
 AMD_BOOTSTRAP = Path(".buildkite/amd/scripts/bootstrap-amd-omni.sh")
 AMD_COLLECTION_GUARD = Path(".buildkite/amd/scripts/assert-pytest-collection.sh")
+AMD_SOURCE_DEPENDENCIES = Path(".buildkite/common/ci_source_file_dependencies.yml")
 AMD_SUITE_COMBINER = Path(__file__).resolve().parents[2] / ".buildkite/amd/scripts/combine_test_suites.py"
 AMD_RUNNER = Path(".buildkite/amd/scripts/run-amd-test.sh")
 AMD_TEMPLATE = Path(".buildkite/amd/test-template-amd-omni.j2")
@@ -79,6 +80,28 @@ TINY_DIFFUSION_JOBS = (
         11,
         "full_model and diffusion and rocm and MI325 and cards_4 and not nvidia_only",
         "artifacts/rocm-tiny-diffusion-4gpu/**/*",
+    ),
+)
+ENTRYPOINTS_FULL_SELECTOR = "full_model and omni and rocm and MI325 and cards_2 and not nvidia_only"
+ENTRYPOINTS_FULL_NIGHTLY_JOBS = (
+    (
+        "Qwen3-Omni Duplex Playback",
+        "tests/entrypoints/openai_api/test_qwen3_omni_realtime_websocket.py::"
+        "TestQwen3OmniDuplexPlayback::test_speech_interrupts_playback_full",
+        40,
+        "omni_qwen3_omni_duplex_playback_function",
+        "artifacts/rocm-qwen3-omni-duplex-playback/**/*",
+        "ROCM_QWEN3_OMNI_DUPLEX_ARTIFACT_DIR",
+        "Expected exactly 40 executed Qwen3-Omni duplex playback tests",
+    ),
+    (
+        "BAGEL Sleep Mode",
+        "tests/entrypoints/test_omni_sleep_mode.py::TestBagelDiffusionSleepMode",
+        3,
+        "omni_bagel_sleep_function",
+        "artifacts/rocm-bagel-sleep/**/*",
+        "ROCM_BAGEL_SLEEP_ARTIFACT_DIR",
+        "Expected exactly three executed BAGEL sleep-mode tests",
     ),
 )
 
@@ -2145,6 +2168,150 @@ def test_qwen3_omni_ready_executes_junit_guard_before_exit(
         job_id_prefix="qwen3-omni-ready-guard",
         pytest_status=pytest_status,
         tests=tests,
+        skipped=skipped,
+        timeout_status=timeout_status,
+        expected_status=expected_status,
+    )
+
+
+def test_entrypoints_full_nightly_splits_qwen_and_bagel_without_skips() -> None:
+    group = _find_group(":full_moon: Entrypoints Full MI300 Nightly", AMD_NIGHTLY_PIPELINE)
+    assert [step["label"] for step in group["steps"]] == [
+        "Qwen3-Omni Duplex Playback",
+        "BAGEL Sleep Mode",
+    ]
+
+    for (
+        label,
+        node,
+        expected_count,
+        dependency_key,
+        artifacts,
+        _artifact_env,
+        expected_message,
+    ) in ENTRYPOINTS_FULL_NIGHTLY_JOBS:
+        step = _find_step(label, AMD_NIGHTLY_PIPELINE)
+        assert step["agent_pool"] == "mi300_2"
+        assert step["mirror_hardwares"] == ["amdproduction"]
+        assert step["grade"] == "NonBlocking"
+        assert step["timeout_in_minutes"] == 180
+        assert step["source_file_dependencies"] == dependency_key
+        assert step["artifact_paths"] == [artifacts]
+        assert "retry" not in step
+
+        commands = "\n".join(step["commands"])
+        assert commands.count(node) == 2
+        assert commands.count(ENTRYPOINTS_FULL_SELECTOR) == 2
+        assert commands.count("--run-level full_model") == 2
+        assert commands.count("--shard-id=0 --num-shards=1") == 2
+        assert f"assert-pytest-collection.sh {expected_count}" in commands
+        assert "timeout --signal=TERM --kill-after=2m 165m" in commands
+        assert "PIPESTATUS[0]" in commands
+        assert expected_message in commands
+        for artifact_name in ("collection.log", "pytest.xml", "pytest.log", "pytest-summary.txt"):
+            assert artifact_name in commands
+        for selector in _marker_expressions(step):
+            assert selector == ENTRYPOINTS_FULL_SELECTOR
+            for cuda_marker in ("cuda", "L4", "H100", "B200"):
+                assert re.search(rf"\b{cuda_marker}\b", selector) is None
+
+    combined_commands = "\n".join(command for step in group["steps"] for command in step["commands"])
+    assert "TestBagelCoordinatedSleepMode" not in combined_commands
+    assert "test_coordinated_cross_device" not in combined_commands
+    for pipeline_path in (AMD_READY_PIPELINE, AMD_MERGE_PIPELINE):
+        text = pipeline_path.read_text(encoding="utf-8")
+        for label, *_rest in ENTRYPOINTS_FULL_NIGHTLY_JOBS:
+            assert label not in text
+
+
+def test_entrypoints_full_nightly_uses_focused_source_dependencies() -> None:
+    registry = yaml.safe_load(AMD_SOURCE_DEPENDENCIES.read_text(encoding="utf-8"))["source_file_dependencies"]
+
+    def flatten_paths(items: list) -> set[str]:
+        paths: set[str] = set()
+        for item in items:
+            if isinstance(item, list):
+                paths.update(flatten_paths(item))
+            else:
+                paths.add(item)
+        return paths
+
+    qwen_paths = flatten_paths(registry["omni_qwen3_omni_duplex_playback_function"])
+    assert {
+        "tests/entrypoints/openai_api/test_qwen3_omni_realtime_websocket.py",
+        "tests/e2e/online_serving/helpers/minicpmo_4_5_duplex.py",
+        "tests/assets/minicpmo_4_5/",
+        "vllm_omni/deploy/qwen3_omni_duplex.yaml",
+        "vllm_omni/engine/duplex/",
+        "vllm_omni/model_executor/models/qwen3_omni/",
+    } <= qwen_paths
+
+    bagel_paths = flatten_paths(registry["omni_bagel_sleep_function"])
+    assert {
+        "tests/entrypoints/test_omni_sleep_mode.py",
+        "vllm_omni/deploy/bagel_single_stage.yaml",
+        "vllm_omni/diffusion/models/bagel/",
+        "vllm_omni/diffusion/worker/diffusion_worker.py",
+        "vllm_omni/entrypoints/async_omni.py",
+        "vllm_omni/model_executor/models/bagel/",
+        "vllm_omni/model_executor/stage_input_processors/bagel.py",
+    } <= bagel_paths
+
+    for paths in (qwen_paths, bagel_paths):
+        assert "tests/entrypoints/" not in paths
+        assert "vllm_omni/entrypoints/" not in paths
+
+
+def test_qwen_duplex_rocm_mark_is_limited_to_the_full_model_method() -> None:
+    source = Path("tests/entrypoints/openai_api/test_qwen3_omni_realtime_websocket.py").read_text(encoding="utf-8")
+    assert ('@hardware_test(res={"cuda": ["H100", "B200"]}, num_cards=2)\nclass TestQwen3OmniDuplexPlayback:') in source
+    assert source.count('@hardware_test(res={"rocm": "MI325"}, num_cards=2)') == 1
+    full_method_prefix = source.split("def test_speech_interrupts_playback_full", maxsplit=1)[0].rsplit(
+        "@pytest.mark.full_model", maxsplit=1
+    )[1]
+    assert '@hardware_test(res={"rocm": "MI325"}, num_cards=2)' in full_method_prefix
+
+
+@pytest.mark.parametrize(
+    ("pytest_status", "tests", "skipped", "timeout_status", "expected_status"),
+    [
+        (0, None, 0, None, 0),
+        (0, None, 1, None, 5),
+        (0, 0, 0, None, 5),
+        (1, None, 0, None, 1),
+        (0, None, 0, 124, 124),
+    ],
+    ids=("pass", "skipped", "zero-tests", "pytest-failure", "timeout"),
+)
+@pytest.mark.parametrize(
+    ("step_label", "_node", "expected_tests", "_dependency_key", "_artifacts", "artifact_env", "expected_message"),
+    ENTRYPOINTS_FULL_NIGHTLY_JOBS,
+    ids=("qwen3-omni-duplex", "bagel-sleep"),
+)
+def test_entrypoints_full_nightly_executes_junit_guard_before_exit(
+    tmp_path: Path,
+    step_label: str,
+    _node: str,
+    expected_tests: int,
+    _dependency_key: str,
+    _artifacts: str,
+    artifact_env: str,
+    expected_message: str,
+    pytest_status: int,
+    tests: int | None,
+    skipped: int,
+    timeout_status: int | None,
+    expected_status: int,
+) -> None:
+    _assert_nightly_junit_guard(
+        tmp_path,
+        step_label=step_label,
+        command_fragment="pytest -s -v -ra",
+        expected_message=expected_message,
+        artifact_env=artifact_env,
+        job_id_prefix=step_label.lower().replace(" ", "-"),
+        pytest_status=pytest_status,
+        tests=expected_tests if tests is None else tests,
         skipped=skipped,
         timeout_status=timeout_status,
         expected_status=expected_status,
