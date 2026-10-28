@@ -2272,6 +2272,14 @@ def test_qwen_duplex_rocm_mark_is_limited_to_the_full_model_method() -> None:
     assert '@hardware_test(res={"rocm": "MI325"}, num_cards=2)' in full_method_prefix
 
 
+def test_bagel_rocm_nightly_allows_cold_aiter_startup() -> None:
+    source = Path("tests/entrypoints/test_omni_sleep_mode.py").read_text(encoding="utf-8")
+    fixture = source.split("async def bagel_diffusion_engine", maxsplit=1)[1].split(
+        "@pytest.mark.full_model", maxsplit=1
+    )[0]
+    assert "init_timeout=1200" in fixture
+
+
 @pytest.mark.parametrize(
     ("pytest_status", "tests", "skipped", "timeout_status", "expected_status"),
     [

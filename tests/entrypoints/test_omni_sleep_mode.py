@@ -537,7 +537,9 @@ async def bagel_diffusion_engine():
     engine = AsyncOmni(
         model=MODEL_BAGEL,
         deploy_config=_bagel_diffusion_deploy_config(),
-        init_timeout=600,
+        # A cold ROCm AITER build can consume almost the entire default
+        # 600-second orchestrator startup budget before the stage reports ready.
+        init_timeout=1200,
         enable_sleep_mode=True,
     )
     yield engine
