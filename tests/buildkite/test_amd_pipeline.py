@@ -3101,3 +3101,28 @@ def test_engine_abort_ready_pins_the_mi325_node() -> None:
     ]
     assert command.count(_ENGINE_ABORT_READY_NODE) == 1
     assert "diff -u /tmp/engine-abort-ready-expected.txt" in command
+
+
+_QWEN3_TTS_READY_MARKER = "core_model and tts and rocm and MI325 and cards_1"
+_QWEN3_TTS_READY_NODES = (
+    "tests/e2e/online_serving/test_qwen3_tts_customvoice.py::test_cached_predictor_streaming_audio[omni_server0]",
+    "tests/e2e/online_serving/test_qwen3_tts_customvoice.py::test_default_cuda_graph_startup[async_chunk]",
+    "tests/e2e/online_serving/test_qwen3_tts_customvoice.py::test_text_to_audio_001[async_chunk]",
+    "tests/e2e/online_serving/test_qwen3_tts_customvoice.py::test_text_to_audio_002[async_chunk]",
+)
+_QWEN3_TTS_CUSTOMVOICE = Path("tests/e2e/online_serving/test_qwen3_tts_customvoice.py")
+
+
+def test_qwen3_tts_ready_pins_selected_customvoice_core_nodes() -> None:
+    """READY fail-closes on the existing one-card CustomVoice core cases."""
+    step = _find_step("Qwen3-TTS E2E Test", AMD_READY_PIPELINE)
+    command = "\n".join(step["commands"])
+    source = _QWEN3_TTS_CUSTOMVOICE.read_text(encoding="utf-8")
+
+    assert step["grade"] == "Blocking"
+    assert "timeout 30m" in command
+    assert _marker_expressions(step) == [_QWEN3_TTS_READY_MARKER, _QWEN3_TTS_READY_MARKER]
+    for node in _QWEN3_TTS_READY_NODES:
+        assert command.count(node) == 1
+    assert "diff -u /tmp/qwen3-tts-ready-expected.txt" in command
+    assert source.count('"rocm": "MI325"') == 4

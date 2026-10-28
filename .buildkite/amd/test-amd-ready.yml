@@ -811,7 +811,31 @@ steps:
         - export VLLM_LOGGING_LEVEL=DEBUG
         - export VLLM_WORKER_MULTIPROC_METHOD=spawn
         - export VLLM_ALLOW_LONG_MAX_MODEL_LEN="1"
-        - timeout 30m pytest -s -v tests/e2e/online_serving/test_qwen3_tts_customvoice.py -m "core_model" --run-level "core_model"
+        # Card counts match, so hardware_test does not add a platform id suffix.
+        - |
+          timeout 30m bash <<'QWEN3_TTS_READY'
+          set -euo pipefail
+          nodes=(
+            "tests/e2e/online_serving/test_qwen3_tts_customvoice.py::test_cached_predictor_streaming_audio[omni_server0]"
+            "tests/e2e/online_serving/test_qwen3_tts_customvoice.py::test_default_cuda_graph_startup[async_chunk]"
+            "tests/e2e/online_serving/test_qwen3_tts_customvoice.py::test_text_to_audio_001[async_chunk]"
+            "tests/e2e/online_serving/test_qwen3_tts_customvoice.py::test_text_to_audio_002[async_chunk]"
+          )
+          printf '%s\n' "$${nodes[@]}" | sort > /tmp/qwen3-tts-ready-expected.txt
+          pytest -q tests/e2e/online_serving/test_qwen3_tts_customvoice.py \
+            -m "core_model and tts and rocm and MI325 and cards_1" \
+            --run-level "core_model" \
+            --collect-only \
+            | sed -n 's/^\(tests\/.*::.*\)/\1/p' \
+            | sort > /tmp/qwen3-tts-ready-collected.txt
+          if ! diff -u /tmp/qwen3-tts-ready-expected.txt /tmp/qwen3-tts-ready-collected.txt; then
+            echo "Qwen3-TTS READY collection drifted from the selected CustomVoice core nodes" >&2
+            exit 1
+          fi
+          pytest -s -v tests/e2e/online_serving/test_qwen3_tts_customvoice.py \
+            -m "core_model and tts and rocm and MI325 and cards_1" \
+            --run-level "core_model"
+          QWEN3_TTS_READY
 
     # Keep a fast model/server integration check in the blocking lane. The
     # full default-backend suite remains in the nightly pipeline because a
