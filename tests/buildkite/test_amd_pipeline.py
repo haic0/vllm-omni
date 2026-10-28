@@ -3233,3 +3233,53 @@ def test_worker_one_card_ready_stays_outside_r2_01() -> None:
     assert "tests/model_executor/" in r2_01_command
     for path in _WORKER_ONE_CARD_FILES:
         assert path not in r2_01_command
+
+
+_DRAMA3_READY_MARKER = "core_model and tts and rocm and MI325 and cards_1"
+_DRAMA3_READY_NODE = "tests/e2e/online_serving/test_drama_3.py::test_text_to_audio_001[drama_3-rocm]"
+_DRAMA3_EXCLUDED = (
+    "test_voice_clone_streaming_002",
+    "test_voice_clone_concurrent_003",
+    "test_voice_clone_requires_ref_text_004",
+)
+
+
+def _hardware_decorator(source: str, function_name: str) -> str:
+    head = source.split(f"def {function_name}", 1)[0]
+    return head.rsplit("@hardware_test", 1)[1]
+
+
+def test_drama3_ready_adds_one_nonblocking_text_to_audio_node() -> None:
+    """READY adds one NonBlocking MI300 job for the one-card ROCm smoke.
+
+    CUDA uses one card and NPU uses two, so ``hardware_test`` keeps a separate
+    ROCm item. The server param id is ``drama_3`` and the platform id is ``rocm``.
+    """
+    step = _find_step("Drama 3 E2E Test", AMD_READY_PIPELINE)
+    command = "\n".join(step["commands"])
+    source = Path("tests/e2e/online_serving/test_drama_3.py").read_text(encoding="utf-8")
+
+    assert step["agent_pool"] == "mi300_1"
+    assert step["mirror_hardwares"] == ["amdproduction"]
+    assert step["grade"] == "NonBlocking"
+    assert step["timeout_in_minutes"] == 40
+    assert step["artifact_paths"] == ["artifacts/rocm-drama3-ready/**/*"]
+    assert "timeout 30m" in command
+    assert "timeout 40m" not in command
+    assert _marker_expressions(step) == [_DRAMA3_READY_MARKER, _DRAMA3_READY_MARKER]
+    assert command.count('--run-level "core_model"') == 2
+    assert "full_model" not in command
+    assert command.count(_DRAMA3_READY_NODE) == 1
+    for name in _DRAMA3_EXCLUDED:
+        assert name not in command
+    assert "diff -u /tmp/drama3-ready-expected.txt" in command
+    assert "--junitxml=" in command
+    assert "pytest.log" not in command
+    assert "pytest-summary.txt" not in command
+    assert "PIPESTATUS" not in command
+    assert "tee " not in command
+    assert '"rocm": "MI325"' in _hardware_decorator(source, "test_text_to_audio_001")
+    assert '"rocm": 1' in _hardware_decorator(source, "test_text_to_audio_001")
+    for name in _DRAMA3_EXCLUDED:
+        assert "rocm" not in _hardware_decorator(source, name)
+    assert source.count('"rocm": "MI325"') == 1
