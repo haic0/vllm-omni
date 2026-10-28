@@ -361,12 +361,31 @@ steps:
       mirror_hardwares: [amdproduction]
       grade: Blocking
       commands:
+        # Both params use id "default". Pytest 9 suffixes them in source order:
+        # default0 is the one-card CUDA/ROCm param, default1 is the NPU param.
         - |
-          timeout 40m bash -c "
-            export VLLM_TEST_CLEAN_GPU_MEMORY=1
-            export VLLM_IMAGE_FETCH_TIMEOUT=60
-            pytest -s -v tests/e2e/online_serving/test_wan22_t2v.py -m 'core_model' --run-level 'core_model'
-          "
+          timeout 40m bash <<'WAN22_READY'
+          set -euo pipefail
+          export VLLM_TEST_CLEAN_GPU_MEMORY=1
+          export VLLM_IMAGE_FETCH_TIMEOUT=60
+          nodes=(
+            "tests/e2e/online_serving/test_wan22_t2v.py::test_text_to_video_001[default0]"
+          )
+          printf '%s\n' "$${nodes[@]}" | sort > /tmp/wan22-ready-expected.txt
+          pytest -q tests/e2e/online_serving/test_wan22_t2v.py \
+            -m "core_model and diffusion and rocm and MI325 and cards_1" \
+            --run-level "core_model" \
+            --collect-only \
+            | sed -n 's/^\(tests\/.*::.*\)/\1/p' \
+            | sort > /tmp/wan22-ready-collected.txt
+          if ! diff -u /tmp/wan22-ready-expected.txt /tmp/wan22-ready-collected.txt; then
+            echo "Wan2.2 READY collection drifted from test_text_to_video_001[default0]" >&2
+            exit 1
+          fi
+          pytest -s -v tests/e2e/online_serving/test_wan22_t2v.py \
+            -m "core_model and diffusion and rocm and MI325 and cards_1" \
+            --run-level "core_model"
+          WAN22_READY
 
 ## ISSUE depends on `diffusers` package: https://github.com/huggingface/diffusers/issues/13274
 # - label: "Audio Generation Model Test"

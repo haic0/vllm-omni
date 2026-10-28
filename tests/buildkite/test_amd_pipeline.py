@@ -3049,3 +3049,36 @@ def test_minicpmo_ready_executes_junit_guard_before_exit(
         timeout_status=timeout_status,
         expected_status=expected_status,
     )
+
+
+_WAN22_READY_MARKER = "core_model and diffusion and rocm and MI325 and cards_1"
+_WAN22_READY_NODE = "tests/e2e/online_serving/test_wan22_t2v.py::test_text_to_video_001[default0]"
+
+
+def test_wan22_ready_fail_closes_on_the_one_card_rocm_node() -> None:
+    """READY keeps the blocking 40-minute Wan2.2 job and rejects the NPU param.
+
+    Both params use id ``default``. Pytest 9 names them ``default0`` (CUDA/ROCm,
+    one card) and ``default1`` (NPU, two cards) in source order.
+    """
+    step = _find_step("Diffusion · Wan22 Test", AMD_READY_PIPELINE)
+    command = "\n".join(step["commands"])
+
+    assert step["agent_pool"] == "mi300_1"
+    assert step["mirror_hardwares"] == ["amdproduction"]
+    assert step["grade"] == "Blocking"
+    assert "timeout_in_minutes" not in step
+    assert "timeout 40m" in command
+    assert _marker_expressions(step) == [_WAN22_READY_MARKER, _WAN22_READY_MARKER]
+    assert command.count('--run-level "core_model"') == 2
+    assert "advanced_model" not in command
+    assert command.count(_WAN22_READY_NODE) == 1
+    assert "test_text_to_video_001[default1]" not in command
+    assert "default1" not in command
+    assert "diff -u /tmp/wan22-ready-expected.txt /tmp/wan22-ready-collected.txt" in command
+
+    merge_online = _find_step("Diffusion · Wan22 Online Test", AMD_MERGE_PIPELINE)
+    merge_markers = _marker_expressions(merge_online)
+    assert merge_markers
+    assert all("advanced_model" in marker and "core_model" not in marker for marker in merge_markers)
+    assert "tests/e2e/online_serving/test_wan22_t2v.py" in "\n".join(merge_online["commands"])
