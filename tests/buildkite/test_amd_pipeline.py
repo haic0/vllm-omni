@@ -3082,3 +3082,22 @@ def test_wan22_ready_fail_closes_on_the_one_card_rocm_node() -> None:
     assert merge_markers
     assert all("advanced_model" in marker and "core_model" not in marker for marker in merge_markers)
     assert "tests/e2e/online_serving/test_wan22_t2v.py" in "\n".join(merge_online["commands"])
+
+
+_ENGINE_ABORT_READY_MARKER = "core_model and omni and rocm and MI325 and cards_1"
+_ENGINE_ABORT_READY_NODE = "tests/engine/test_async_omni_engine_abort.py::test_abort"
+
+
+def test_engine_abort_ready_pins_the_mi325_node() -> None:
+    """READY fail-closes on the existing one-card ROCm abort case."""
+    step = _find_step("Engine Test", AMD_READY_PIPELINE)
+    command = "\n".join(step["commands"])
+
+    assert step["grade"] == "Blocking"
+    assert "timeout 15m" in command
+    assert _marker_expressions(step) == [
+        _ENGINE_ABORT_READY_MARKER,
+        _ENGINE_ABORT_READY_MARKER,
+    ]
+    assert command.count(_ENGINE_ABORT_READY_NODE) == 1
+    assert "diff -u /tmp/engine-abort-ready-expected.txt" in command

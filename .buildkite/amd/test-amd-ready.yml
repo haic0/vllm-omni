@@ -453,10 +453,29 @@ steps:
   grade: Blocking
   commands:
     - export VLLM_WORKER_MULTIPROC_METHOD=spawn
+    # hardware_test unions L4 and MI325 at one card, so the node id has no
+    # platform suffix. The H100 CUDA ready leaf and tests/worker stay out.
     - |
-      timeout 15m bash -c '
-              pytest -s -v tests/engine/test_async_omni_engine_abort.py
-      '
+      timeout 15m bash <<'ENGINE_ABORT_READY'
+      set -euo pipefail
+      nodes=(
+        "tests/engine/test_async_omni_engine_abort.py::test_abort"
+      )
+      printf '%s\n' "$${nodes[@]}" | sort > /tmp/engine-abort-ready-expected.txt
+      pytest -q tests/engine/test_async_omni_engine_abort.py \
+        -m "core_model and omni and rocm and MI325 and cards_1" \
+        --run-level "core_model" \
+        --collect-only \
+        | sed -n 's/^\(tests\/.*::.*\)/\1/p' \
+        | sort > /tmp/engine-abort-ready-collected.txt
+      if ! diff -u /tmp/engine-abort-ready-expected.txt /tmp/engine-abort-ready-collected.txt; then
+        echo "Engine abort READY collection drifted from test_abort" >&2
+        exit 1
+      fi
+      pytest -s -v tests/engine/test_async_omni_engine_abort.py \
+        -m "core_model and omni and rocm and MI325 and cards_1" \
+        --run-level "core_model"
+      ENGINE_ABORT_READY
 
 - label: "ROCm · Entrypoints GPU Coverage (R2-02)"
   agent_pool: mi300_1
