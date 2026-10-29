@@ -3346,3 +3346,92 @@ def test_device_reduction_ready_pins_collected_gpu_nodes() -> None:
     assert reduction.count("@_also_rocm_mi325") == 5
     assert 'res={"cuda": "L4", "rocm": "MI325"}, num_cards=1' in wan
     assert engine.count('res={"cuda": "L4", "rocm": "MI325"}, num_cards=1') == 1
+
+
+_WORKER_COPY_MARKER = "core_model and rocm and MI325 and cards_1"
+_WORKER_COPY_FILES = (
+    "tests/worker/test_device_copy.py",
+    "tests/worker_v2/test_intermediate_buffer_cuda_residency.py",
+    "tests/worker_v2/test_omni_ar_model_runner_cuda.py",
+)
+_WORKER_COPY_OWNED_BY_9552 = _WORKER_ONE_CARD_FILES
+_WORKER_COPY_EXCLUDED = (
+    "tests/worker/test_index_staging.py",
+    "tests/worker_v2/test_index_staging.py",
+    "tests/worker_v2/test_shared_stage_cuda.py",
+    "tests/worker_v2/test_staged_writes.py",
+    "tests/worker/test_gpu_ar_model_runner_cuda.py",
+    "tests/worker_v2/test_capture_query_bound_gpu.py",
+    "tests/worker_v2/test_decode_query_bound_gpu.py",
+)
+_WORKER_COPY_NODES = (
+    "tests/worker/test_device_copy.py::test_tensor_copy_cuda_handles_pageable_and_pinned_sources",
+    "tests/worker/test_device_copy.py::test_device_stager_views_survive_until_their_readers_finish",
+    "tests/worker/test_device_copy.py::test_device_stager_empty_input_does_not_consume_a_ring_slot",
+    "tests/worker_v2/test_intermediate_buffer_cuda_residency.py::"
+    "test_gpu_resident_values_stay_on_device_after_update[key0-dtype0]",
+    "tests/worker_v2/test_intermediate_buffer_cuda_residency.py::"
+    "test_gpu_resident_values_stay_on_device_after_update[key1-dtype1]",
+    "tests/worker_v2/test_omni_ar_model_runner_cuda.py::test_chunked_fixed_token_scores_are_copied_from_cuda",
+)
+
+
+def test_worker_copy_ready_pins_remaining_one_card_nodes() -> None:
+    """READY adds one NonBlocking MI300 job for the remaining copy cases.
+
+    The marker selects both intermediate-buffer residency rows and the three
+    device-copy GPU tests. #9552's worker files stay on the other job. R2-01
+    still collects 1416 model-executor nodes.
+    """
+    step = _find_step("ROCm · One-Card Worker Copy Test", AMD_READY_PIPELINE)
+    command = "\n".join(step["commands"])
+    body = command.split("nodes=(", 1)[1].split(")", 1)[0]
+    quoted = tuple(re.findall(r'"(tests/[^"]+)"', body))
+
+    assert step["agent_pool"] == "mi300_1"
+    assert step["mirror_hardwares"] == ["amdproduction"]
+    assert step["grade"] == "NonBlocking"
+    assert step["timeout_in_minutes"] == 25
+    assert step["artifact_paths"] == ["artifacts/rocm-worker-copy/**/*"]
+    assert "timeout --signal=TERM --kill-after=1m 20m" in command
+    assert "timeout 25m" not in command
+    assert _marker_expressions(step) == [_WORKER_COPY_MARKER, _WORKER_COPY_MARKER]
+    assert command.count('--run-level "core_model"') == 2
+    assert quoted == _WORKER_COPY_NODES
+    assert len(_WORKER_COPY_NODES) == 6
+    assert set(quoted).isdisjoint(_WORKER_ONE_CARD_NODES)
+    residency = [node for node in quoted if "test_intermediate_buffer_cuda_residency.py::" in node]
+    assert residency == [
+        "tests/worker_v2/test_intermediate_buffer_cuda_residency.py::"
+        "test_gpu_resident_values_stay_on_device_after_update[key0-dtype0]",
+        "tests/worker_v2/test_intermediate_buffer_cuda_residency.py::"
+        "test_gpu_resident_values_stay_on_device_after_update[key1-dtype1]",
+    ]
+    for path in _WORKER_COPY_FILES:
+        assert sum(node.startswith(path + "::") for node in quoted) >= 1
+        assert command.count(f"\n  {path} \\\n") == 2
+    for path in _WORKER_COPY_OWNED_BY_9552:
+        assert path not in command
+    for path in _WORKER_COPY_EXCLUDED:
+        assert path not in command
+    assert "test_tensor_copy_cpu_preserves_view_and_dtype" not in command
+    assert "test_device_stager_cpu_falls_back_to_a_copy" not in command
+    assert "diff -u /tmp/worker-copy-ready-expected.txt" in command
+    assert "--junitxml=" in command
+
+    device_copy = Path(_WORKER_COPY_FILES[0]).read_text(encoding="utf-8")
+    assert device_copy.count('res={"cuda": "L4", "rocm": "MI325"}, num_cards=1') == 3
+    assert device_copy.count("@pytest.mark.cpu") == 2
+    residency_source = Path(_WORKER_COPY_FILES[1]).read_text(encoding="utf-8")
+    assert residency_source.count('res={"cuda": "L4", "rocm": "MI325"}, num_cards=1') == 1
+    runner = Path(_WORKER_COPY_FILES[2]).read_text(encoding="utf-8")
+    assert runner.count('res={"cuda": "L4", "rocm": "MI325"}, num_cards=1') == 1
+
+    r2_01 = _find_step(
+        "ROCm · Model Executor GPU Coverage (R2-01) · Shard %N/%t",
+        AMD_READY_PIPELINE,
+    )
+    r2_01_command = "\n".join(r2_01["commands"])
+    assert "assert-pytest-collection.sh 1416" in r2_01_command
+    for path in _WORKER_COPY_FILES:
+        assert path not in r2_01_command
