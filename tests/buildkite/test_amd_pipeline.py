@@ -3306,7 +3306,7 @@ _DEVICE_REDUCTION_READY_NODES = (
 
 
 def test_device_reduction_ready_pins_collected_gpu_nodes() -> None:
-    """READY fail-closes on the one-card device-reduction GPU nodes.
+    """READY blocks on the one-card device-reduction GPU nodes.
 
     Local collection returned the dtype ids for test_device_reduction.py and
     the engine case. test_wan_device_reduction.py did not import
@@ -3323,8 +3323,9 @@ def test_device_reduction_ready_pins_collected_gpu_nodes() -> None:
 
     assert step["agent_pool"] == "mi300_1"
     assert step["mirror_hardwares"] == ["amdproduction"]
-    assert step["grade"] == "NonBlocking"
+    assert step["grade"] == "Blocking"
     assert step["timeout_in_minutes"] == 20
+    assert step["artifact_paths"] == ["artifacts/rocm-device-reduction/**/*"]
     assert "timeout --signal=TERM --kill-after=1m 15m" in command
     assert _marker_expressions(step) == [
         _DEVICE_REDUCTION_READY_MARKER,
@@ -3338,6 +3339,12 @@ def test_device_reduction_ready_pins_collected_gpu_nodes() -> None:
     assert "test_diffusion_worker.py" not in command
     assert "test_wan22" not in command
     assert "diff -u /tmp/device-reduction-ready-expected.txt" in command
+    assert "--junitxml=" in command
+    assert "Expected exactly 17 executed device-reduction GPU tests" in command
+    assert "pytest.log" not in command
+    assert "pytest-summary.txt" not in command
+    assert "PIPESTATUS" not in command
+    assert "tee " not in command
     assert reduction.count("@_also_rocm_mi325") == 5
     assert 'res={"cuda": "L4", "rocm": "MI325"}, num_cards=1' in wan
     assert engine.count('res={"cuda": "L4", "rocm": "MI325"}, num_cards=1') == 1
@@ -3601,6 +3608,7 @@ _DISTRIBUTED_BUFFER_READY_NODES = (
     f"{_DISTRIBUTED_BUFFER_READY_FILE}::TestMooncakePackedPayloadSmoke::test_from_bytes_device_cuda_round_trip",
 )
 _DISTRIBUTED_BUFFER_JUNIT_MESSAGE = "Expected exactly two executed distributed buffer GPU smokes"
+_DEVICE_REDUCTION_JUNIT_MESSAGE = "Expected exactly 17 executed device-reduction GPU tests"
 
 
 def _minijinja_bin() -> str | None:
@@ -3746,6 +3754,56 @@ def test_distributed_buffer_ready_executes_junit_guard_before_exit(
         expected_message=_DISTRIBUTED_BUFFER_JUNIT_MESSAGE,
         artifact_env="ROCM_DISTRIBUTED_BUFFER_ARTIFACT_DIR",
         job_id_prefix="distributed-buffer-ready-guard",
+        pytest_status=pytest_status,
+        tests=tests,
+        skipped=skipped,
+        timeout_status=timeout_status,
+        expected_status=expected_status,
+    )
+
+
+def test_device_reduction_ready_renders_blocking() -> None:
+    """The device-reduction job renders as a hard failure on amd_mi300_1."""
+    label = "ROCm · Diffusion Device-Reduction GPU Test"
+    step = _find_step(label, AMD_READY_PIPELINE)
+    assert step["grade"] == "Blocking"
+    assert step["agent_pool"] == "mi300_1"
+    assert len(_DEVICE_REDUCTION_READY_NODES) == 17
+    rendered = _rendered_ready_step(label)
+    assert rendered["agents"]["queue"] == "amd_mi300_1"
+    assert rendered["depends_on"] == "amd-build"
+    assert rendered["soft_fail"] is False
+    assert rendered["env"]["VLLM_ROCM_USE_AITER"] == "0"
+
+
+@pytest.mark.parametrize(
+    ("pytest_status", "tests", "skipped", "timeout_status", "expected_status"),
+    [
+        (0, 17, 0, None, 0),
+        (0, 17, 1, None, 5),
+        (0, 0, 0, None, 5),
+        (1, 17, 0, None, 1),
+        (0, 17, 0, 124, 124),
+    ],
+    ids=("pass", "skipped", "zero-tests", "pytest-failure", "timeout"),
+)
+def test_device_reduction_ready_executes_junit_guard_before_exit(
+    tmp_path: Path,
+    pytest_status: int,
+    tests: int,
+    skipped: int,
+    timeout_status: int | None,
+    expected_status: int,
+) -> None:
+    """Device-reduction READY fails closed unless all 17 GPU nodes executed."""
+    _assert_nightly_junit_guard(
+        tmp_path,
+        pipeline_path=AMD_READY_PIPELINE,
+        step_label="ROCm · Diffusion Device-Reduction GPU Test",
+        command_fragment="pytest -s -v",
+        expected_message=_DEVICE_REDUCTION_JUNIT_MESSAGE,
+        artifact_env="ROCM_DEVICE_REDUCTION_ARTIFACT_DIR",
+        job_id_prefix="device-reduction-ready-guard",
         pytest_status=pytest_status,
         tests=tests,
         skipped=skipped,
