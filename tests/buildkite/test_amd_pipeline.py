@@ -4,6 +4,7 @@
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 from importlib.util import find_spec, module_from_spec, spec_from_file_location
@@ -3468,7 +3469,7 @@ _VERL_GENERATE_READY_NODE = "tests/e2e/features/rlhf_test/test_verl_omni_e2e.py:
 
 
 def test_verl_generate_ready_pins_the_mi325_node() -> None:
-    """READY fail-closes on the one-card VeRL-Omni generate case."""
+    """READY blocks on the one-card VeRL-Omni generate case."""
     step = _find_step("ROCm · VeRL-Omni Generate GPU Test", AMD_READY_PIPELINE)
     command = "\n".join(step["commands"])
     source = Path("tests/e2e/features/rlhf_test/test_verl_omni_e2e.py").read_text(encoding="utf-8")
@@ -3476,8 +3477,9 @@ def test_verl_generate_ready_pins_the_mi325_node() -> None:
 
     assert step["agent_pool"] == "mi300_1"
     assert step["mirror_hardwares"] == ["amdproduction"]
-    assert step["grade"] == "NonBlocking"
+    assert step["grade"] == "Blocking"
     assert step["timeout_in_minutes"] == 40
+    assert step["artifact_paths"] == ["artifacts/rocm-verl-generate/**/*"]
     assert "timeout --signal=TERM --kill-after=1m 30m" in command
     assert _marker_expressions(step) == [
         _VERL_GENERATE_READY_MARKER,
@@ -3486,6 +3488,12 @@ def test_verl_generate_ready_pins_the_mi325_node() -> None:
     assert command.count('--run-level "core_model"') == 2
     assert command.count(_VERL_GENERATE_READY_NODE) == 1
     assert "diff -u /tmp/verl-generate-ready-expected.txt" in command
+    assert "--junitxml=" in command
+    assert "Expected exactly one executed VeRL-Omni generate test" in command
+    assert "pytest.log" not in command
+    assert "pytest-summary.txt" not in command
+    assert "PIPESTATUS" not in command
+    assert "tee " not in command
     assert "export DIFFUSION_ATTENTION_BACKEND=TORCH_SDPA" in command
     assert "VLLM_OMNI_DLO_DP_WAVE_TIMEOUT" not in command
     assert "test_weight_transfer" not in command
@@ -3590,3 +3598,120 @@ def test_tiny_diffusion_base_ready_pins_one_card_nodes() -> None:
         AMD_NIGHTLY_PIPELINE,
     )
     assert all("cards_1" not in marker for marker in _marker_expressions(nightly))
+
+
+_VERL_GENERATE_JUNIT_MESSAGE = "Expected exactly one executed VeRL-Omni generate test"
+
+
+def _minijinja_bin() -> str | None:
+    found = shutil.which("minijinja-cli")
+    if found:
+        return found
+    cargo = Path.home() / ".cargo" / "bin" / "minijinja-cli"
+    if cargo.is_file():
+        return str(cargo)
+    return None
+
+
+def _walk_rendered_steps(steps: list[dict]):
+    for step in steps:
+        if step.get("label"):
+            yield step
+        yield from _walk_rendered_steps(step.get("steps", []))
+
+
+def _rendered_ready_step(label: str) -> dict:
+    """Render READY and return the leaf whose label ends with ``label``."""
+    minijinja = _minijinja_bin()
+    if minijinja is None:
+        pytest.skip("minijinja-cli is required to render the AMD READY pipeline")
+    assert minijinja is not None
+    result = subprocess.run(
+        [
+            minijinja,
+            str(AMD_TEMPLATE),
+            str(AMD_READY_PIPELINE),
+            "-D",
+            "branch=feature",
+            "-D",
+            "list_file_diff=.buildkite/amd/test-amd-ready.yml",
+            "-D",
+            "run_all=0",
+            "-D",
+            "nightly=0",
+            "-D",
+            "mirror_hw=amdproduction",
+            "-D",
+            "fail_fast=true",
+            "-D",
+            "vllm_use_precompiled=1",
+            "-D",
+            "vllm_merge_base_commit=HEAD",
+            "-D",
+            "cov_enabled=0",
+            "-D",
+            "vllm_ci_branch=main",
+            "-D",
+            "vllm_aiter_mha_trusted_commit=test",
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, result.stderr
+    rendered = yaml.safe_load(result.stdout)
+    matches = [step for step in _walk_rendered_steps(rendered["steps"]) if step["label"].endswith(label)]
+    assert len(matches) == 1, [step["label"] for step in matches]
+    return matches[0]
+
+
+def test_verl_generate_ready_renders_blocking() -> None:
+    """The VeRL generate job renders as a hard failure on amd_mi300_1."""
+    label = "ROCm · VeRL-Omni Generate GPU Test"
+    step = _find_step(label, AMD_READY_PIPELINE)
+    command = "\n".join(step["commands"])
+    assert step["grade"] == "Blocking"
+    assert step["agent_pool"] == "mi300_1"
+    assert command.count(_VERL_GENERATE_READY_NODE) == 1
+    assert "export DIFFUSION_ATTENTION_BACKEND=TORCH_SDPA" in command
+    rendered = _rendered_ready_step(label)
+    assert rendered["agents"]["queue"] == "amd_mi300_1"
+    assert rendered["depends_on"] == "amd-build"
+    assert rendered["soft_fail"] is False
+    assert rendered["env"]["VLLM_ROCM_USE_AITER"] == "0"
+
+
+@pytest.mark.parametrize(
+    ("pytest_status", "tests", "skipped", "timeout_status", "expected_status"),
+    [
+        (0, 1, 0, None, 0),
+        (0, 1, 1, None, 5),
+        (0, 0, 0, None, 5),
+        (1, 1, 0, None, 1),
+        (0, 1, 0, 124, 124),
+    ],
+    ids=("pass", "skipped", "zero-tests", "pytest-failure", "timeout"),
+)
+def test_verl_generate_ready_executes_junit_guard_before_exit(
+    tmp_path: Path,
+    pytest_status: int,
+    tests: int,
+    skipped: int,
+    timeout_status: int | None,
+    expected_status: int,
+) -> None:
+    """VeRL READY fails closed unless test_generate executed and was not skipped."""
+    _assert_nightly_junit_guard(
+        tmp_path,
+        pipeline_path=AMD_READY_PIPELINE,
+        step_label="ROCm · VeRL-Omni Generate GPU Test",
+        command_fragment="pytest -s -v tests/e2e/features/rlhf_test/test_verl_omni_e2e.py",
+        expected_message=_VERL_GENERATE_JUNIT_MESSAGE,
+        artifact_env="ROCM_VERL_GENERATE_ARTIFACT_DIR",
+        job_id_prefix="verl-generate-ready-guard",
+        pytest_status=pytest_status,
+        tests=tests,
+        skipped=skipped,
+        timeout_status=timeout_status,
+        expected_status=expected_status,
+    )
