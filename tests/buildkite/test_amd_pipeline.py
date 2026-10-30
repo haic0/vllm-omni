@@ -2919,13 +2919,13 @@ _MINICPMO_READY_JOBS = (
 
 
 def test_minicpmo_ready_jobs_select_marked_core_model_nodes() -> None:
-    """READY owns the CUDA core_model cases, selected by an explicit ROCm mark."""
+    """READY blocks on the CUDA core_model cases, selected by an explicit ROCm mark."""
     for label, timeout, command_timeout, artifact, nodes, junit_message in _MINICPMO_READY_JOBS:
         step = _find_step(label, AMD_READY_PIPELINE)
         command = "\n".join(step["commands"])
 
         assert step["agent_pool"] == "mi300_1"
-        assert step["grade"] == "NonBlocking"
+        assert step["grade"] == "Blocking"
         assert step["timeout_in_minutes"] == timeout
         assert step["artifact_paths"] == [f"{artifact}/**/*"]
         assert f"--kill-after=1m {command_timeout}" in command
@@ -3900,3 +3900,19 @@ def test_worker_ready_executes_junit_guard_before_exit(
         timeout_status=timeout_status,
         expected_status=expected_status,
     )
+
+
+def test_minicpmo_ready_grades_render_blocking() -> None:
+    """The three MiniCPM READY grades are Blocking and the JUnit guards remain."""
+    for label, _timeout, _command_timeout, _artifact, _nodes, junit_message in _MINICPMO_READY_JOBS:
+        step = _find_step(label, AMD_READY_PIPELINE)
+        command = "\n".join(step["commands"])
+        assert step["grade"] == "Blocking"
+        assert step["agent_pool"] == "mi300_1"
+        assert junit_message in command
+        assert "--junitxml=" in command
+        rendered = _rendered_ready_step(label)
+        assert rendered["agents"]["queue"] == "amd_mi300_1"
+        assert rendered["depends_on"] == "amd-build"
+        assert rendered["soft_fail"] is False
+        assert rendered["env"]["VLLM_ROCM_USE_AITER"] == "0"

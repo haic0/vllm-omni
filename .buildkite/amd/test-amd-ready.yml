@@ -1001,7 +1001,7 @@ steps:
       agent_pool: mi300_1
       depends_on: amd-build
       mirror_hardwares: [amdproduction]
-      grade: NonBlocking
+      grade: Blocking
       timeout_in_minutes: 30
       artifact_paths:
         - artifacts/rocm-minicpmo-45-offline/**/*
@@ -1057,7 +1057,7 @@ steps:
       agent_pool: mi300_1
       depends_on: amd-build
       mirror_hardwares: [amdproduction]
-      grade: NonBlocking
+      grade: Blocking
       timeout_in_minutes: 30
       artifact_paths:
         - artifacts/rocm-minicpmo-45-online/**/*
@@ -1115,7 +1115,7 @@ steps:
       agent_pool: mi300_1
       depends_on: amd-build
       mirror_hardwares: [amdproduction]
-      grade: NonBlocking
+      grade: Blocking
       timeout_in_minutes: 45
       artifact_paths:
         - artifacts/rocm-minicpmo-45-duplex/**/*
